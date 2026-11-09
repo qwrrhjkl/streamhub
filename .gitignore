@@ -1,0 +1,33 @@
+# Runtime state and user-generated media
+/data/
+/runtime/
+/node_modules/
+*.log
+*.log.*
+*.pid
+
+# Local and production configuration
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+*.bak
+*.bak.*
+/config/streamhub.env
+
+# Licensed vendor payloads: keep only the placement note
+/vendor/blackmagic/*
+!/vendor/blackmagic/README.txt
+/vendor/blackmagic-sdk/
+
+# Offline release artifacts and temporary source snapshots
+StreamHub-*.tar.gz
+StreamHub-*.tar.gz.sha256
+.streamhub-*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

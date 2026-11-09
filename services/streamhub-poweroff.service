@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop StreamHub services and power off the server
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/sleep 2
+ExecStart=/usr/bin/systemctl stop streamhub-rtmp.service streamhub.service
+ExecStart=/usr/bin/systemctl --no-block poweroff
+TimeoutStartSec=120

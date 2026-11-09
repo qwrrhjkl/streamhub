@@ -1,0 +1,28 @@
+[Unit]
+Description=StreamHub live streaming control service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=streamhub
+Group=streamhub
+SupplementaryGroups=video audio render
+WorkingDirectory=/opt/StreamHub
+EnvironmentFile=-/etc/streamhub/streamhub-hardware.env
+EnvironmentFile=/etc/streamhub/streamhub.env
+ExecStart=/usr/bin/node /opt/StreamHub/server/index.js
+Restart=on-failure
+RestartSec=2
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/StreamHub/data
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

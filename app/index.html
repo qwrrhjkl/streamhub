@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StreamHub 中文直播控制台</title>
+  <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
+  <link rel="stylesheet" href="/styles.css?v=20261004-capture-discovery">
+</head>
+<body>
+  <main class="login-view" id="loginView">
+    <a class="login-brand" href="/" aria-label="StreamHub">
+      <img src="/assets/streamhub-logo.png" alt="">
+      <strong>StreamHub</strong>
+    </a>
+    <div class="signal-field" aria-hidden="true">
+      <span class="signal-route signal-route-a"><i></i></span>
+      <span class="signal-route signal-route-b"><i></i></span>
+      <span class="signal-route signal-route-c"><i></i></span>
+      <span class="signal-route signal-route-d"><i></i></span>
+    </div>
+    <form class="login-card" id="loginForm" novalidate>
+      <p class="login-eyebrow">安全访问</p>
+      <h1>登录控制台</h1>
+      <p class="login-intro">使用管理员账户继续</p>
+      <label for="loginUsername">用户名</label>
+      <input id="loginUsername" name="username" autocomplete="username" placeholder="请输入用户名" required>
+      <label for="loginPassword">密码</label>
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+      <p class="login-error" id="loginError" role="alert" hidden></p>
+      <button class="login-submit" id="loginSubmit" type="submit">登录</button>
+      <p class="login-security"><span aria-hidden="true"></span>受保护的内部管理入口</p>
+    </form>
+    <div class="channel-bars" aria-hidden="true">
+      <i style="--h:5px"></i><i style="--h:9px"></i><i style="--h:4px"></i><i style="--h:13px"></i>
+      <i style="--h:7px"></i><i style="--h:16px"></i><i style="--h:8px"></i><i style="--h:12px"></i>
+      <i style="--h:6px"></i><i style="--h:18px"></i><i style="--h:8px"></i><i style="--h:14px"></i>
+      <i style="--h:5px"></i><i style="--h:11px"></i><i style="--h:7px"></i><i style="--h:17px"></i>
+      <i style="--h:10px"></i><i style="--h:6px"></i><i style="--h:13px"></i><i style="--h:8px"></i>
+      <i style="--h:15px"></i><i style="--h:5px"></i><i style="--h:12px"></i><i style="--h:9px"></i>
+    </div>
+  </main>
+
+  <div class="console-app" id="consoleApp" hidden>
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-mark" src="/assets/streamhub-logo.png" alt="StreamHub">
+      <div>
+        <strong>StreamHub</strong>
+        <span>直播推流工作台</span>
+      </div>
+    </div>
+    <nav class="nav" id="nav" aria-label="主导航">
+      <button data-view="dashboard" class="active">总览</button>
+      <button data-view="rooms">直播间</button>
+      <button data-view="destinations">推流平台</button>
+      <button data-view="distribution">分发推流</button>
+      <button data-view="scenes">画面场景</button>
+      <button data-view="monitor">推流状态</button>
+      <button data-view="devices">设备</button>
+      <button data-view="logs">日志</button>
+    </nav>
+  </aside>
+
+  <main class="shell">
+    <header class="console-topbar">
+      <div class="console-topbar-actions">
+        <button class="theme-toggle icon-button" id="themeToggle" type="button" aria-label="切换到夜间模式" aria-pressed="false" title="切换到夜间模式">
+          <i data-lucide="sun" class="theme-icon theme-icon-sun" aria-hidden="true"></i>
+          <i data-lucide="moon" class="theme-icon theme-icon-moon" aria-hidden="true"></i>
+        </button>
+        <div class="console-user">
+        <button class="user-menu-button icon-button" id="userMenuButton" type="button" aria-label="用户菜单" aria-expanded="false" aria-controls="userMenu">
+          <i data-lucide="user-round" aria-hidden="true"></i>
+        </button>
+        <div class="console-user-menu" id="userMenu" role="menu" hidden>
+          <strong id="currentUsername"></strong>
+          <button id="logoutButton" type="button" role="menuitem">退出登录</button>
+          <button class="shutdown-menu-button" id="shutdownMenuButton" type="button" role="menuitem">
+            <i data-lucide="power" aria-hidden="true"></i>
+            <span>关机</span>
+          </button>
+        </div>
+        </div>
+      </div>
+    </header>
+    <section class="content">
+      <section class="view active" id="view-dashboard">
+        <div class="dashboard-command-head">
+          <div>
+            <h1>运行总览</h1>
+            <p>直播接入、分发任务和输出状态集中监控。</p>
+          </div>
+          <div class="dashboard-actions">
+            <button data-view="rooms" class="primary jump">创建直播间</button>
+            <button data-view="distribution" class="jump">创建分发任务</button>
+          </div>
+        </div>
+        <div class="metrics-grid summary-grid" id="summaryCards"></div>
+        <section class="dashboard-resource-strip" aria-label="系统资源仪表盘">
+          <div class="dashboard-resource-grid" id="dashboardResources" aria-live="polite"></div>
+        </section>
+        <section class="panel dashboard-pipeline-panel">
+          <div class="panel-head">
+            <div>
+              <h2>推流任务</h2>
+              <p>运行、无信号回退和异常任务集中显示。</p>
+            </div>
+            <button data-view="monitor" class="jump">打开推流状态</button>
+          </div>
+          <div id="dashboardPipelineCards" class="dashboard-pipeline-list"></div>
+        </section>
+        <section class="panel dashboard-network-panel" aria-labelledby="dashboardNetworkTitle">
+          <header class="dashboard-section-head"><div><h2 id="dashboardNetworkTitle">实时流量监控</h2><p>服务器网卡实际接收与发送速率 · 最近 5 分钟</p></div><span class="live-indicator"><i></i>每秒刷新</span></header>
+          <div class="dashboard-network-layout">
+            <div class="dashboard-network-chart-wrap"><canvas id="dashboardNetworkChart" width="960" height="250" aria-label="服务器网卡上传和下载流量趋势"></canvas></div>
+            <aside class="dashboard-network-stats">
+              <div><strong id="dashboardNetworkReceive">--</strong><span>当前下载</span></div>
+              <div><strong id="dashboardNetworkSend">--</strong><span>当前上传</span></div>
+              <small id="dashboardNetworkInterface">等待网卡采样</small>
+            </aside>
+          </div>
+        </section>
+        <section class="dashboard-process-panel" aria-labelledby="dashboardProcessTitle">
+          <header class="process-status-head">
+            <div><h2 id="dashboardProcessTitle">资源占用进程</h2><p id="processStatusSummary">正在采样...</p></div>
+            <div class="process-sort-control" role="group" aria-label="进程排序方式">
+              <button type="button" id="processSortCpu" data-process-sort="cpu" aria-pressed="true">CPU</button>
+              <button type="button" id="processSortMemory" data-process-sort="memory" aria-pressed="false">内存</button>
+            </div>
+          </header>
+          <div class="process-status-table-wrap">
+            <table class="process-status-table" aria-label="运行进程资源占用前十">
+              <thead><tr><th scope="col">名称</th><th scope="col">PID</th><th scope="col">状态</th><th scope="col">CPU</th><th scope="col">内存</th><th scope="col">磁盘读取</th><th scope="col">磁盘写入</th></tr></thead>
+              <tbody id="processStatusBody"><tr><td colspan="7">正在采样...</td></tr></tbody>
+            </table>
+          </div>
+          <p class="system-status-message" id="processStatusMessage" role="status" aria-live="polite"></p>
+        </section>
+      </section>
+
+      <section class="view" id="view-rooms">
+        <div class="page-head">
+          <div>
+            <h1>直播间</h1>
+            <p>先创建本地直播间，然后用 OBS、VLC、导播台或编码器把信号推到本服务器。分辨率、帧率、码率和音频参数请在推流端设置。</p>
+          </div>
+          <button class="primary" data-scroll="#roomForm">新建直播间</button>
+        </div>
+        <div class="workspace-grid entity-workspace">
+          <form class="panel form" id="roomForm">
+            <h2 id="roomFormTitle">创建直播间</h2>
+            <label>直播间名称<input name="name" placeholder="例如：赛事主直播间"></label>
+            <label>直播间标识<input name="streamName" placeholder="例如：match-pgm，可留空自动生成"></label>
+            <p class="form-note">直播间只负责接收上游推上来的信号；分辨率、帧率、码率和音频参数请在终端推流端设置。</p>
+            <div class="form-row">
+              <button class="primary" id="roomSubmitBtn">保存直播间</button>
+              <button type="button" id="cancelRoomEditBtn" hidden>取消修改</button>
+            </div>
+          </form>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>本地直播间列表</h2>
+                <p>推流服务器地址和密钥会长期保存，刷新页面不会丢失。</p>
+              </div>
+            </div>
+            <div id="roomCards" class="cards"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-destinations">
+        <div class="page-head">
+          <div>
+            <h1>推流平台</h1>
+            <p>统一管理需要推送的目标平台，支持 RTMP、RTMPS、SRT，以及录制文件路径。</p>
+          </div>
+          <button class="primary" data-scroll="#destinationForm">新增平台</button>
+        </div>
+        <div class="workspace-grid entity-workspace">
+          <form class="panel form" id="destinationForm">
+            <h2 id="destinationFormTitle">新增平台</h2>
+            <div class="compact-grid">
+              <label>平台名称<input name="name" placeholder="例如：主推、平台 A"></label>
+              <label>协议<select name="protocol"><option value="rtmp">RTMP</option><option value="rtmps">RTMPS</option><option value="srt">SRT</option><option value="file">本地文件</option></select></label>
+              <label>服务器地址<input name="server" placeholder="rtmp://push.example.com/live"></label>
+              <label>推流密钥<input name="streamKey" placeholder="例如：abcd1234"></label>
+              <label class="full">完整 URL / 录制路径<input name="url" placeholder="例如：rtmp://server/app/key 或 /opt/StreamHub/output.mp4"></label>
+            </div>
+            <div class="form-row">
+              <button class="primary" id="destinationSubmitBtn">保存平台</button>
+              <button type="button" id="cancelDestinationEditBtn" hidden>取消修改</button>
+            </div>
+          </form>
+
+          <div class="panel">
+            <h2>平台列表</h2>
+            <div id="destinationCards" class="cards"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-distribution">
+        <div class="page-head">
+          <div>
+            <h1>分发推流</h1>
+            <p>选择本地直播间、URL 流、本地视频文件或采集卡信号作为输入，然后把同一路内容分发到多个推流平台。</p>
+          </div>
+        </div>
+
+        <div class="workspace-grid wide distribution-workspace">
+          <form class="panel form" id="pipelineForm">
+            <h2>创建分发任务</h2>
+            <label>直播名称<input name="name" placeholder="例如：PGM 分发任务"></label>
+            <label>输入源类型
+              <select name="inputType" id="inputType">
+                <option value="room">本地直播间</option>
+                <option value="url">RTMP/SRT/HLS URL 流</option>
+                <option value="file">视频素材</option>
+                <option value="capture">采集卡信号</option>
+                <option value="scene">自定义场景</option>
+              </select>
+            </label>
+
+            <div class="input-mode" data-input-mode="room">
+              <label>选择直播间<select name="roomId" id="pipelineRoom"></select></label>
+            </div>
+            <div class="input-mode" data-input-mode="url" hidden>
+              <label>URL 输入<input name="url" placeholder="rtmp://...、srt://... 或 https://..."></label>
+            </div>
+            <div class="input-mode" data-input-mode="file" hidden>
+              <label>选择视频素材<select name="mediaId" id="pipelineMedia"></select></label>
+              <label class="check-line"><input name="fileLoop" type="checkbox" checked> 循环播放</label>
+            </div>
+            <div class="input-mode" data-input-mode="capture" hidden>
+              <label>采集接口
+                <select name="captureBackend" id="captureBackend">
+                  <option value="v4l2">V4L2 / ALSA</option>
+                  <option value="decklink">Blackmagic DeckLink</option>
+                </select>
+              </label>
+              <div class="compact-grid capture-backend-panel" data-capture-backend="v4l2">
+                <label>视频设备
+                  <select name="videoDevice" id="videoDevice" aria-describedby="v4l2Status">
+                    <option value="">正在发现视频设备…</option>
+                  </select>
+                </label>
+                <label>音频设备
+                  <select name="audioDevice" id="audioDevice" aria-describedby="v4l2Status">
+                    <option value="disabled">不使用音频</option>
+                  </select>
+                </label>
+                <label>采集分辨率<select name="captureResolution"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
+                <label>采集帧率<select name="captureFps"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
+                <div class="capture-device-actions full">
+                  <button id="refreshCaptureDevicesBtn" type="button">
+                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                    <span>刷新设备</span>
+                  </button>
+                </div>
+                <p id="v4l2Status" class="field-status full" role="status" aria-live="polite">进入采集卡模式后自动发现设备。</p>
+              </div>
+              <div class="compact-grid capture-backend-panel" data-capture-backend="decklink" hidden>
+                <label class="full">DeckLink 设备
+                  <input name="decklinkDevice" list="decklinkDeviceOptions" placeholder="可选择自动发现结果，或手工输入设备名" aria-describedby="decklinkStatus">
+                </label>
+                <datalist id="decklinkDeviceOptions"></datalist>
+                <label>输入格式
+                  <input name="decklinkFormatCode" value="auto" list="decklinkFormatOptions" placeholder="auto" aria-describedby="decklinkStatus">
+                </label>
+                <datalist id="decklinkFormatOptions"></datalist>
+                <label>像素格式
+                  <select name="decklinkRawFormat">
+                    <option value="uyvy422">8-bit YUV 4:2:2 (uyvy422)</option>
+                    <option value="yuv422p10">10-bit YUV 4:2:2 (yuv422p10)</option>
+                    <option value="argb">ARGB</option>
+                    <option value="bgra">BGRA</option>
+                    <option value="rgb10">10-bit RGB</option>
+                    <option value="auto">自动</option>
+                  </select>
+                </label>
+                <label>嵌入式音频声道
+                  <select name="decklinkAudioChannels"><option value="2">2</option><option value="8">8</option><option value="16">16</option></select>
+                </label>
+                <p id="decklinkStatus" class="field-status full" role="status" aria-live="polite"></p>
+              </div>
+            </div>
+            <div class="input-mode" data-input-mode="scene" hidden>
+              <label>选择画面场景<select name="sceneId" id="pipelineScene"></select></label>
+            </div>
+
+            <div class="input-preview-action">
+              <button id="previewInputBtn" type="button">预览输入源</button>
+            </div>
+
+            <div class="destination-picker-box">
+              <label>选择推流平台<select id="destinationPicker"></select></label>
+              <button type="button" id="addDestinationBtn">添加平台</button>
+              <div class="selected-destination-panel">
+                <span>已选平台</span>
+                <div id="selectedDestinationList" class="selected-destinations"></div>
+              </div>
+              <p class="form-help">先在下拉框里选一个平台，再点“添加平台”。可以重复添加多个平台。</p>
+            </div>
+            <label>运行模式<select name="mode"><option value="shared-relay">共享转推</option><option value="direct">直连推送</option></select></label>
+
+            <div class="settings-box">
+              <h3>直播设置</h3>
+              <input type="hidden" name="preset" value="veryfast" aria-describedby="encodingModeStatus">
+              <input type="hidden" name="profile" value="high" aria-describedby="encodingModeStatus">
+              <div class="compact-grid">
+                <label>输出分辨率<select name="outputResolution" aria-describedby="encodingModeStatus"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
+                <label>输出帧率<select name="fps" aria-describedby="encodingModeStatus"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
+                <label>视频编码<select name="videoEncoder" aria-describedby="encodingModeStatus"><option value="auto" selected>自动</option><option value="copy">copy（不转码）</option><option value="h264_nvenc">h264_nvenc</option><option value="libx264">libx264（CPU 测试）</option></select></label>
+                <p id="encodingModeStatus" class="field-status full" role="status" aria-live="polite" tabindex="-1"></p>
+                <label>视频码率 Kbps<input name="bitrateKbps" type="number" value="8000" min="300" aria-describedby="encodingModeStatus"></label>
+                <label>关键帧间隔（秒）<select name="keyframeSec" aria-describedby="encodingModeStatus"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+                <label>音频编码<select name="audioEncoder"><option value="aac">aac</option><option value="copy">copy（不转码）</option></select></label>
+                <label>采样率<select name="sampleRate"><option value="48000">48000</option><option value="44100">44100</option></select></label>
+                <label>声道<select name="channels"><option value="stereo">stereo</option><option value="mono">mono</option></select></label>
+                <label>音频码率 Kbps<input name="audioBitrateKbps" type="number" value="320" min="64"></label>
+              </div>
+            </div>
+
+            <div class="settings-box live-delay-box">
+              <h3>直播延时</h3>
+              <label class="check-line live-delay-toggle"><input name="delayEnabled" type="checkbox"> 启用</label>
+              <div class="live-delay-fields">
+                <label>延时时间（秒）
+                  <input name="delaySeconds" type="number" value="20" min="1" max="300" step="1" disabled aria-describedby="liveDelayMemoryEstimate">
+                </label>
+                <p id="liveDelayMemoryEstimate" class="form-help" role="status" aria-live="polite">启用后将使用内存缓冲编码后的直播内容。</p>
+              </div>
+            </div>
+
+            <fieldset class="watermark-section no-signal-section">
+              <legend>无信号推送画面</legend>
+              <p class="form-help">直播源暂时无信号时推送此图片；未选择时使用默认黑屏。支持 PNG、JPEG、WebP，单张不超过 10 MiB。</p>
+              <div class="watermark-controls">
+                <label>本地图片<input id="noSignalImageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+                <button id="uploadNoSignalImageBtn" type="button">选择图片</button>
+              </div>
+              <div class="overlay-list" id="noSignalImagePreview" aria-label="无信号推送画面"></div>
+              <p class="watermark-status" id="noSignalImageStatus" role="status" aria-live="polite"></p>
+            </fieldset>
+
+            <fieldset class="watermark-section" id="watermarkSection">
+              <legend>画面水印</legend>
+              <div class="overlay-section-head">
+                <p class="form-help">按列表顺序叠加到全部输出，越靠后的图片层级越高；支持 PNG、JPEG、WebP，单张不超过 10 MiB，最多 20 张。</p>
+                <button id="previewWatermarkBtn" type="button" disabled>预览</button>
+              </div>
+              <div class="watermark-controls">
+                <label>本地图片<input id="watermarkFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label>
+                <button type="button" id="uploadWatermarkBtn">添加水印</button>
+              </div>
+              <div class="overlay-list" id="watermarkList" aria-label="水印层级列表"></div>
+              <p class="watermark-status" id="watermarkStatus" role="status" aria-live="polite"></p>
+            </fieldset>
+
+            <fieldset class="watermark-section slideshow-section" id="slideshowSection">
+              <legend>幻灯片放映</legend>
+              <div class="overlay-section-head">
+                <p class="form-help">透明图片按顺序循环淡入淡出，始终叠加在静态水印上方。透明区域继续显示原视频。</p>
+                <button id="previewSlideshowBtn" type="button" disabled>预览</button>
+              </div>
+              <div class="compact-grid">
+                <label>播放间隔（ms）<input id="slideshowIntervalMs" name="slideshowIntervalMs" type="number" value="2000" min="500" max="60000" step="100"></label>
+                <label>淡入淡出（ms）<input id="slideshowTransitionMs" name="slideshowTransitionMs" type="number" value="700" min="0" max="5000" step="100"></label>
+              </div>
+              <div class="watermark-controls">
+                <label>本地图片<input id="slideshowFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label>
+                <button type="button" id="uploadSlideshowBtn">添加图片</button>
+              </div>
+              <div class="overlay-list" id="slideshowList" aria-label="幻灯片播放顺序"></div>
+              <p class="watermark-status" id="slideshowStatus" role="status" aria-live="polite"></p>
+            </fieldset>
+
+            <div class="form-row">
+              <button class="primary" id="pipelineSubmitBtn">保存任务</button>
+              <button type="button" id="cancelPipelineEditBtn" hidden>取消修改</button>
+              <button type="button" id="refreshBtn">刷新</button>
+            </div>
+          </form>
+
+          <div class="stack">
+            <div class="panel">
+              <h2>分发任务</h2>
+              <div id="pipelineCards" class="cards"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-scenes">
+        <div class="page-head">
+          <div>
+            <h1>画面场景</h1>
+            <p>管理重播视频、网络流和水印，在运行中的共享转推任务里完成 Preview / Program 切换，并录制当前最终播出画面。</p>
+          </div>
+          <button class="primary" id="newSceneBtn" type="button">新建场景</button>
+        </div>
+
+        <div class="studio-tabs" id="studioTabs" role="tablist" aria-label="画面场景工作区">
+          <button class="active" type="button" role="tab" aria-selected="true" data-studio-tab="scenes">场景管理</button>
+          <button type="button" role="tab" aria-selected="false" data-studio-tab="media">视频素材</button>
+          <button type="button" role="tab" aria-selected="false" data-studio-tab="recordings">录制管理</button>
+        </div>
+
+        <section class="studio-tab-panel" id="studio-scenes" data-studio-panel="scenes" role="tabpanel">
+          <div class="scene-workspace studio-workspace-v2">
+            <aside class="scene-rail" aria-label="场景列表">
+              <header><h2>场景</h2><span id="sceneCount">0</span></header>
+              <div id="sceneRail" class="scene-rail-list"></div>
+            </aside>
+
+            <form class="scene-editor" id="sceneForm">
+              <header class="scene-editor-head">
+                <div>
+                  <h2 id="sceneFormTitle">新建场景</h2>
+                  <p id="sceneFormStatus" role="status" aria-live="polite">选择素材并保存后，即可在分发任务的切换台使用。</p>
+                </div>
+                <button class="danger" id="deleteSceneBtn" type="button" hidden>删除场景</button>
+              </header>
+
+              <label>场景名称<input id="sceneName" name="sceneName" placeholder="例如：精彩回放" required></label>
+
+              <fieldset class="scene-source-fieldset">
+                <legend>视频源</legend>
+                <div class="segmented-control" role="group" aria-label="场景视频源类型">
+                  <button class="active" type="button" aria-pressed="true" data-scene-source-type="playlist">视频列表</button>
+                  <button type="button" aria-pressed="false" data-scene-source-type="stream">网络流</button>
+                </div>
+
+                <div class="scene-source-panel" id="scenePlaylistFields" data-scene-source-panel="playlist">
+                  <div class="scene-section-head">
+                    <div><h3>播放列表</h3><p>按顺序连续播放，最后一个结束后回到第一个。</p></div>
+                    <button id="openMediaPickerBtn" type="button">添加视频</button>
+                  </div>
+                  <div id="scenePlaylist" class="scene-playlist"></div>
+                </div>
+
+                <div class="scene-source-panel" id="sceneStreamFields" data-scene-source-panel="stream" hidden>
+                  <label>流地址<input id="sceneStreamUrl" name="sceneStreamUrl" placeholder="rtmp://、rtmps://、srt:// 或 https://"></label>
+                </div>
+              </fieldset>
+
+              <fieldset class="scene-watermark-fieldset">
+                <legend>场景水印</legend>
+                <div class="watermark-controls">
+                  <label>本地图片<input id="sceneWatermarkFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label>
+                  <button id="uploadSceneWatermarkBtn" type="button">添加水印</button>
+                </div>
+                <div id="sceneWatermarkList" class="overlay-list" aria-label="场景水印层级"></div>
+                <p id="sceneWatermarkStatus" class="watermark-status" role="status" aria-live="polite"></p>
+              </fieldset>
+
+              <div class="scene-editor-actions">
+                <button class="primary" id="saveSceneBtn" type="submit">保存场景</button>
+                <button id="resetSceneBtn" type="button">放弃修改</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="studio-tab-panel" id="studio-media" data-studio-panel="media" role="tabpanel" hidden>
+          <div class="media-workspace media-workspace-v2">
+            <section class="media-library-panel">
+              <header class="scene-section-head media-library-head">
+                <div class="media-library-title"><h2>视频素材</h2><p>上传到服务器后可加入一个或多个场景播放列表。</p></div>
+                <div class="media-upload-actions">
+                  <label class="media-file-picker" for="mediaUploadInput">
+                    <span id="mediaUploadSelection">选择视频文件</span>
+                    <input id="mediaUploadInput" type="file" multiple accept="video/*">
+                  </label>
+                  <button class="primary" id="uploadMediaBtn" type="button">上传视频</button>
+                </div>
+              </header>
+              <div class="media-upload-progress" id="mediaUploadProgress" hidden aria-live="polite">
+                <div class="media-upload-progress-head"><span id="mediaUploadProgressLabel">准备上传</span><strong id="mediaUploadProgressValue">0%</strong><button class="media-upload-cancel" id="cancelMediaUploadBtn" type="button" hidden>取消上传</button></div>
+                <progress id="mediaUploadProgressBar" max="100" value="0" aria-label="视频上传进度"></progress>
+              </div>
+              <p id="mediaUploadStatus" class="field-status" role="status" aria-live="polite"></p>
+              <div id="mediaLibrary" class="media-library"></div>
+            </section>
+            <aside class="media-inspector">
+              <h2>素材预览</h2>
+              <div class="media-preview-frame">
+                <video id="mediaPreview" controls playsinline preload="metadata" hidden></video>
+                <p id="mediaPreviewEmpty">从素材列表选择一个视频进行预览。</p>
+              </div>
+              <div id="mediaPreviewMeta" class="media-preview-meta"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="studio-tab-panel" id="studio-recordings" data-studio-panel="recordings" role="tabpanel" hidden>
+          <div class="recording-workspace recording-workspace-v2">
+            <form class="recording-control" id="recordingForm">
+              <h2>录制当前直播画面</h2>
+              <p>录制 Program 最终画面。停止并重播会先完成文件保存，再从 `00:00:00` 切换到直播间。</p>
+              <label>分发任务<select id="recordingPipeline" name="pipelineId"></select></label>
+              <label>录制名称<input id="recordingName" name="name" placeholder="例如：上半场完整回放" required></label>
+              <section class="recording-capacity" id="recordingCapacity" aria-label="录制容量估算">
+                <div class="recording-capacity-head"><strong>录制容量估算</strong><span>直接复制</span></div>
+                <dl>
+                  <div><dt>当前 Program 码率</dt><dd id="recordingBitrateValue">--</dd></div>
+                  <div><dt>预计每小时</dt><dd id="recordingHourlyStorage">--</dd></div>
+                  <div><dt>当前可用磁盘</dt><dd id="recordingAvailableStorage">--</dd></div>
+                  <div><dt>预计可录时长</dt><dd id="recordingAvailableHours">--</dd></div>
+                </dl>
+                <p id="recordingCapacityMessage" role="status" aria-live="polite">请选择运行中的分发任务。</p>
+                <small>录制使用磁盘空间，不占用等量内存。</small>
+              </section>
+              <button class="primary" id="startRecordingBtn" type="submit">开始录制</button>
+              <p id="recordingStatus" class="field-status" role="status" aria-live="polite"></p>
+            </form>
+            <section class="recording-list-panel">
+              <div class="scene-section-head"><div><h2>录制任务</h2><p>可保存为视频素材，或结束后立即重播。</p></div></div>
+              <div id="recordingJobs" class="recording-jobs"></div>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="view operations-workspace" id="view-monitor">
+        <div class="page-head">
+          <div>
+            <h1>推流状态</h1>
+            <p>查看每路 RTMP/RTMPS 输出按远端 TCP 确认字节计算的实际输出码率和 FPS，以及本次推流开始以来、在确认本地丢弃后累计的估算网络丢帧数、估算网络丢帧率、运行时长和最近错误。每路输出都有独立折线图，方便判断单个平台是否异常。</p>
+          </div>
+        </div>
+        <div class="panel monitor-toolbar">
+          <div>
+            <h2>查看时间范围</h2>
+            <p>默认显示最近 15 分钟；码率和帧率按约每秒一次保存，服务重启或停流后仍可查询最近 3 天。</p>
+          </div>
+          <div class="monitor-range-controls">
+            <label>快捷范围
+              <select id="monitorRangePreset">
+                <option value="300">5 分钟</option>
+                <option value="900" selected>15 分钟</option>
+                <option value="1800">30 分钟</option>
+                <option value="3600">1 小时</option>
+                <option value="86400">24 小时</option>
+                <option value="259200">3 天</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <label>自定义分钟
+              <input id="monitorCustomMinutes" type="number" min="1" value="15">
+            </label>
+            <button id="applyMonitorRangeBtn">应用</button>
+          </div>
+        </div>
+        <div class="monitor-layout">
+          <div class="monitor-cards" id="monitorCards"></div>
+        </div>
+      </section>
+
+      <section class="view operations-workspace" id="view-devices">
+        <div class="page-head">
+          <div>
+            <h1>设备</h1>
+            <p>采集卡和音频设备检测。没有安装 v4l-utils 或 ALSA 工具时会显示安装提示。</p>
+          </div>
+        </div>
+        <div class="panel"><pre id="deviceText">正在加载...</pre></div>
+      </section>
+
+      <section class="view operations-workspace" id="view-logs">
+        <div class="page-head">
+          <div>
+            <h1>日志</h1>
+            <p>查看 StreamHub、FFmpeg 和 RTMP 接入服务日志。</p>
+          </div>
+        </div>
+        <div class="panel form">
+          <div class="log-toolbar">
+            <label>日志文件<select id="logSelect"></select></label>
+            <button class="log-report-button icon-button" id="downloadLogReportBtn" type="button" title="下载任务报告" aria-label="下载当前分发任务报告" disabled><i data-lucide="download" aria-hidden="true"></i></button>
+            <button class="danger log-delete-button icon-button" id="deleteLogBtn" type="button" title="删除日志" aria-label="删除当前日志" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
+          </div>
+          <pre id="logText">暂无日志</pre>
+        </div>
+      </section>
+
+    </section>
+  </main>
+
+  <dialog class="media-picker-dialog dialog-system-v2" id="mediaPickerDialog" aria-labelledby="mediaPickerTitle">
+    <form method="dialog" class="media-picker-shell">
+      <header>
+        <div><h2 id="mediaPickerTitle">添加视频到播放列表</h2><p>选中的视频会追加到当前列表末尾。</p></div>
+        <button class="icon-button" id="closeMediaPickerBtn" type="button" aria-label="关闭视频素材列表" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+      <div id="mediaPickerList" class="media-picker-list"></div>
+      <div class="media-picker-actions">
+        <button id="cancelMediaSelectionBtn" type="button">取消</button>
+        <button class="primary" id="confirmMediaSelectionBtn" type="button">添加所选视频</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="studio-switcher-dialog dialog-system-v2" id="studioSwitcherDialog" aria-labelledby="studioSwitcherTitle">
+    <div class="studio-switcher-shell">
+      <header class="studio-switcher-head">
+        <div><h2 id="studioSwitcherTitle">画面切换台</h2><p id="studioSwitcherPipeline"></p></div>
+        <button class="icon-button" id="closeStudioSwitcherBtn" type="button" aria-label="关闭画面切换台" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+
+      <div class="studio-switcher-toolbar">
+        <label>预监场景<select id="switcherSceneSelect"></select></label>
+        <span id="studioSwitcherStatus" role="status" aria-live="polite"></span>
+      </div>
+
+      <div class="studio-switcher-monitors">
+        <section class="studio-monitor" id="previewMonitor" aria-labelledby="previewMonitorTitle">
+          <header><div><span>Preview</span><h3 id="previewMonitorTitle">预监 Preview</h3></div><strong id="previewSceneLabel">未选择场景</strong></header>
+          <div class="studio-monitor-frame preview-frame">
+            <video id="switcherPreviewVideo" muted playsinline preload="auto" hidden></video>
+            <img id="switcherPreviewImage" alt="预监网络流画面" hidden>
+            <div id="switcherPreviewOverlays" class="studio-preview-overlays" aria-hidden="true"></div>
+            <p id="switcherPreviewEmpty">请选择一个场景。</p>
+          </div>
+          <footer>
+            <span id="switcherPreviewProgress">待命</span>
+            <button id="previewPlaybackBtn" type="button" hidden>暂停</button>
+          </footer>
+        </section>
+
+        <section class="studio-monitor program" id="programMonitor" aria-labelledby="programMonitorTitle">
+          <header><div><span>Program</span><h3 id="programMonitorTitle">直播 Program</h3></div><strong id="programSceneLabel">当前直播源</strong></header>
+          <div class="studio-monitor-frame program-frame">
+            <img id="switcherProgramImage" alt="当前直播 Program 画面" hidden>
+            <p id="switcherProgramStatus">正在连接当前直播画面…</p>
+          </div>
+          <footer><span id="programSourceLabel">当前分发任务输入源</span></footer>
+        </section>
+      </div>
+
+      <div class="studio-switcher-actions">
+        <button id="restoreProgramBtn" type="button">切回直播源</button>
+        <button class="studio-take-button" id="switchSceneBtn" type="button">切换到 Program</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="input-preview-dialog dialog-system-v2" id="inputPreviewDialog" aria-labelledby="inputPreviewTitle">
+    <div class="input-preview-shell">
+      <header class="input-preview-header">
+        <div>
+          <h2 id="inputPreviewTitle">输入源预览</h2>
+          <p id="inputPreviewSource"></p>
+        </div>
+        <button class="icon-button" id="closeInputPreviewBtn" type="button" aria-label="关闭输入源预览" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+      <div class="input-preview-frame">
+        <video id="inputPreviewVideo" controls autoplay playsinline hidden></video>
+        <img id="inputPreviewImage" alt="当前输入源视频预览" hidden>
+        <p id="inputPreviewStatus" role="status" aria-live="polite">正在连接输入源…</p>
+      </div>
+      <div class="input-preview-meta" id="inputPreviewMeta" hidden></div>
+      <div class="input-preview-actions">
+        <button id="retryInputPreviewBtn" type="button" hidden>重试</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="overlay-layout-dialog dialog-system-v2" id="overlayLayoutDialog" aria-labelledby="overlayLayoutTitle">
+    <div class="overlay-layout-shell">
+      <header class="overlay-layout-header">
+        <div>
+          <h2 id="overlayLayoutTitle">画面布局预览</h2>
+          <p id="overlayLayoutStatus" role="status" aria-live="polite">正在准备预览画面…</p>
+        </div>
+        <button class="icon-button" id="overlayLayoutCloseBtn" type="button" aria-label="关闭画面布局预览" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+
+      <div class="overlay-layout-workspace">
+        <aside class="overlay-layout-picker" id="overlayLayoutLayerPicker" aria-label="选择编辑图层"></aside>
+        <div class="overlay-layout-stage">
+          <div class="overlay-layout-canvas" id="overlayLayoutCanvas" tabindex="0" aria-label="1920 x 1080 画面布局">
+            <img class="overlay-layout-background" id="overlayLayoutBackground" alt="当前输入源预览" hidden>
+            <div class="overlay-layout-layers" id="overlayLayoutLayers"></div>
+            <p class="overlay-layout-empty" id="overlayLayoutEmpty">当前输入源预览暂不可用</p>
+          </div>
+          <div class="overlay-layout-readout" id="overlayLayoutReadout">1920 x 1080</div>
+        </div>
+      </div>
+
+      <div class="overlay-layout-actions">
+        <button class="primary" id="overlayLayoutAdjustBtn" type="button">调节</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="live-delay-stop-dialog dialog-system-v2" id="liveDelayStopDialog" aria-labelledby="liveDelayStopTitle">
+    <div class="live-delay-stop-shell">
+      <div>
+        <h2 id="liveDelayStopTitle">停止延时直播</h2>
+        <p id="liveDelayStopMessage"></p>
+      </div>
+      <div class="live-delay-stop-actions">
+        <button class="primary" id="drainLiveDelayBtn" type="button">停止直播</button>
+        <button class="danger" id="discardLiveDelayBtn" type="button">切断直播（丢弃延时）</button>
+        <button id="cancelLiveDelayStopBtn" type="button">取消</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="monitor-detail-dialog dialog-system-v2" id="monitorDetailDialog" aria-labelledby="monitorDetailTitle">
+    <div class="monitor-detail-shell">
+      <header class="monitor-detail-header">
+        <div>
+          <h2 id="monitorDetailTitle">推流状态详情</h2>
+          <p id="monitorDetailSubtitle">正在读取单路输出数据...</p>
+        </div>
+        <button class="icon-button" type="button" id="closeMonitorDetailBtn" aria-label="关闭推流状态详情" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+
+      <form class="monitor-detail-controls" id="monitorDetailRangeForm">
+        <label>查看范围
+          <select id="monitorDetailRangePreset">
+            <option value="300">最近 5 分钟</option>
+            <option value="900" selected>最近 15 分钟</option>
+            <option value="1800">最近 30 分钟</option>
+            <option value="3600">最近 1 小时</option>
+            <option value="86400">24 小时</option>
+            <option value="259200">3 天</option>
+            <option value="exact">自定义时间段</option>
+          </select>
+        </label>
+        <label>开始时间
+          <input id="monitorDetailFrom" type="datetime-local" step="1" disabled>
+        </label>
+        <label>结束时间
+          <input id="monitorDetailTo" type="datetime-local" step="1" disabled>
+        </label>
+        <div class="monitor-detail-control-actions">
+          <button class="primary" id="queryMonitorDetailBtn" type="submit">查询详情</button>
+          <button id="monitorDetailLiveBtn" type="button">回到实时</button>
+        </div>
+      </form>
+
+      <div class="monitor-detail-status" id="monitorDetailStatus" role="status" aria-live="polite"></div>
+      <div class="monitor-detail-metrics" id="monitorDetailMetrics"></div>
+      <div class="monitor-drop-reset-actions">
+        <button type="button" id="resetMonitorDropsBtn">重置展示统计</button>
+        <span id="monitorDropResetInfo">显示本次推流开始以来的累计网络丢帧。</span>
+      </div>
+      <div class="monitor-detail-chart-wrap">
+        <canvas id="monitorDetailChart" width="1040" height="380" data-height="380" aria-label="单路输出码率和帧率折线图"></canvas>
+      </div>
+      <p class="error monitor-detail-error" id="monitorDetailError" role="alert" hidden></p>
+    </div>
+  </dialog>
+
+  <dialog class="system-shutdown-dialog dialog-system-v2" id="systemShutdownDialog" aria-labelledby="systemShutdownTitle" aria-describedby="systemShutdownDescription">
+    <div class="system-shutdown-shell">
+      <div class="system-shutdown-mark" aria-hidden="true"><i data-lucide="power"></i></div>
+      <div>
+        <h2 id="systemShutdownTitle">确认关机？</h2>
+        <p id="systemShutdownDescription">将停止所有 StreamHub 推流服务并关闭服务器。关机后，控制台连接会中断。</p>
+      </div>
+      <p class="system-shutdown-status" id="systemShutdownStatus" role="status" aria-live="polite" hidden></p>
+      <div class="system-shutdown-actions">
+        <button class="danger" id="confirmSystemShutdownButton" type="button">确认</button>
+        <button id="cancelSystemShutdownButton" type="button">取消</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
+  <script src="/app.js?v=20261004-capture-discovery"></script>
+</body>
+</html>

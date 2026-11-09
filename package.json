@@ -1,0 +1,15 @@
+{
+  "name": "streamhub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StreamHub 中文直播推流控制台，无 Docker 依赖。",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,18 @@
+/opt/StreamHub/data/logs/nginx-rtmp-*.log {
+    daily
+    maxsize 100M
+    rotate 7
+    maxage 7
+    missingok
+    notifempty
+    nocompress
+    dateext
+    dateformat -%Y%m%dT%H%M%S
+    su streamhub streamhub
+    sharedscripts
+    postrotate
+        if [ -r /run/streamhub-rtmp/nginx.pid ]; then
+            /bin/kill -USR1 "$(/bin/cat /run/streamhub-rtmp/nginx.pid)" 2>/dev/null || true
+        fi
+    endscript
+}
