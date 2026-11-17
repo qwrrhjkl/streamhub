@@ -867,6 +867,25 @@ test('console uses a professional appliance shell with grouped operational navig
   assert.match(appFunctionSource('renderTopbarTelemetry'), /sendBytesPerSec/);
 });
 
+test('premium control-surface interactions stay restrained and accessibility-aware', () => {
+  const premiumMotion = appFunctionSource('premiumMotionEnabled');
+  const premiumInteractions = appFunctionSource('initializePremiumInteractions');
+  assert.match(premiumMotion, /pointer: fine/);
+  assert.match(premiumMotion, /prefers-reduced-motion: reduce/);
+  assert.match(premiumInteractions, /requestAnimationFrame/);
+  assert.match(premiumInteractions, /--ui-spotlight-x/);
+  assert.match(premiumInteractions, /--ui-tilt-x/);
+  assert.match(premiumInteractions, /ui-ripple/);
+  assert.match(app, /initializePremiumInteractions\(\)/);
+  assert.match(app, /data-lucide="maximize-2"/);
+  assert.match(css, /radial-gradient\(circle 200px at var\(--ui-spotlight-x/);
+  assert.match(css, /animation:ui-border-flow 4s linear infinite/);
+  assert.match(css, /animation:ui-ripple \.6s ease-out forwards/);
+  assert.match(css, /@media\(pointer:fine\) and \(prefers-reduced-motion:no-preference\)/);
+  assert.match(css, /@media\(prefers-reduced-motion:reduce\)[\s\S]*\.console-app::after\{display:none\}/);
+  assert.match(css, /\.console-app \.summary-grid\{gap:10px\}/);
+});
+
 test('desktop sidebar can collapse persistently without changing mobile navigation', () => {
   assert.match(html, /id="sidebarToggle"[^>]+aria-controls="consoleSidebar"[^>]+aria-expanded="true"/);
   assert.match(html, /id="consoleSidebar"/);

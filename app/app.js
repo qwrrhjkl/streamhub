@@ -276,6 +276,85 @@ function initializeParameterHelp() {
   window.addEventListener('scroll', () => closeParameterHelp(), true);
 }
 
+const PREMIUM_TILT_SELECTOR = '.pipeline-task-card, .entity-control-card, .dashboard-resource-card';
+
+function premiumMotionEnabled() {
+  return typeof window !== 'undefined'
+    && window.matchMedia('(pointer: fine)').matches
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function initializePremiumInteractions() {
+  const app = $('#consoleApp');
+  if (!app) return;
+  app.classList.add('premium-interactions-ready');
+
+  let activeTilt = null;
+  let pointerFrame = 0;
+  let latestPointer = null;
+  const resetTilt = element => {
+    if (!element) return;
+    element.classList.remove('is-tilting');
+    element.style.removeProperty('--ui-tilt-x');
+    element.style.removeProperty('--ui-tilt-y');
+  };
+  const applyPointerEffects = () => {
+    pointerFrame = 0;
+    if (!latestPointer || !premiumMotionEnabled()) return;
+    const { clientX, clientY, target } = latestPointer;
+    app.style.setProperty('--ui-spotlight-x', `${clientX}px`);
+    app.style.setProperty('--ui-spotlight-y', `${clientY}px`);
+    app.classList.add('is-pointer-active');
+
+    const card = target instanceof Element ? target.closest(PREMIUM_TILT_SELECTOR) : null;
+    if (card !== activeTilt) {
+      resetTilt(activeTilt);
+      activeTilt = card;
+    }
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const horizontal = Math.max(-0.5, Math.min(0.5, (clientX - rect.left) / rect.width - 0.5));
+    const vertical = Math.max(-0.5, Math.min(0.5, (clientY - rect.top) / rect.height - 0.5));
+    card.style.setProperty('--ui-tilt-x', `${(-vertical * 2.4).toFixed(2)}deg`);
+    card.style.setProperty('--ui-tilt-y', `${(horizontal * 2.4).toFixed(2)}deg`);
+    card.classList.add('is-tilting');
+  };
+
+  app.addEventListener('pointermove', event => {
+    latestPointer = event;
+    if (!pointerFrame) pointerFrame = requestAnimationFrame(applyPointerEffects);
+  }, { passive: true });
+  app.addEventListener('pointerleave', () => {
+    latestPointer = null;
+    app.classList.remove('is-pointer-active');
+    resetTilt(activeTilt);
+    activeTilt = null;
+  });
+  app.addEventListener('pointercancel', () => {
+    resetTilt(activeTilt);
+    activeTilt = null;
+  });
+
+  app.addEventListener('click', event => {
+    if (!premiumMotionEnabled()) return;
+    const button = event.target instanceof Element ? event.target.closest('button') : null;
+    if (!button || button.disabled || button.closest('#nav') || button.classList.contains('pipeline-card-preview-trigger')) return;
+    const rect = button.getBoundingClientRect();
+    const diameter = 12;
+    const x = event.clientX || rect.left + rect.width / 2;
+    const y = event.clientY || rect.top + rect.height / 2;
+    const ripple = document.createElement('span');
+    ripple.className = 'ui-ripple';
+    ripple.style.left = `${x - rect.left - diameter / 2}px`;
+    ripple.style.top = `${y - rect.top - diameter / 2}px`;
+    ripple.style.setProperty('--ui-ripple-scale', String(Math.max(rect.width, rect.height) / 4));
+    button.classList.add('ui-ripple-host');
+    button.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+  });
+}
+
 let state = null;
 let systemShutdownPending = false;
 let systemShutdownAccepted = false;
@@ -3779,6 +3858,7 @@ function renderPipelineCards() {
             <strong data-monitor-status="${escapeHtml(p.id)}">正在等待监看</strong>
             <small>${escapeHtml(inputMeta.label)}</small>
           </span>
+          <span class="pipeline-preview-affordance" aria-hidden="true"><i data-lucide="maximize-2"></i></span>
         </button>
         <div class="pipeline-card-preview-meta">
           <span data-monitor-meta="${escapeHtml(p.id)}"><i data-lucide="video" aria-hidden="true"></i>${escapeHtml(resolution)} / ${escapeHtml(fps)} fps</span>
@@ -6147,6 +6227,7 @@ handleMonitorDetailRangePresetChange();
 initializeTheme();
 initializeSidebar();
 initializeParameterHelp();
+initializePremiumInteractions();
 $('#sidebarToggle').addEventListener('click', () => {
   applySidebarCollapsed(!$('#consoleApp').classList.contains('sidebar-collapsed'), true);
 });
