@@ -115,6 +115,13 @@ class PreviewManager {
 
   describe(id) {
     const session = this.requireSession(id);
+    const audioState = !session.audio
+      ? 'disabled'
+      : session.audioCodec
+        ? 'present'
+        : session.outputDescriptionStarted
+          ? 'absent'
+          : 'detecting';
     return {
       id: session.id,
       sourceLabel: session.source.name,
@@ -126,6 +133,7 @@ class PreviewManager {
       bitrateSource: session.inputBitrateKbps ? 'input' : session.previewBitrateKbps ? 'preview' : '',
       videoCodec: session.videoCodec || '',
       audioCodec: session.audioCodec || '',
+      audioState,
       latencyMs: session.monitor ? 1500 : 500,
       message: session.message || '',
     };

@@ -601,6 +601,10 @@ test('preview builders keep full preview at source frame rate and use low-load c
     { type: 'pull', url: 'rtmp://origin.example.com/live/pgm' },
     { monitor: true },
   );
+  const withAudio = buildDirectPreviewArgs(
+    { type: 'pull', url: 'rtmp://origin.example.com/live/pgm' },
+    { format: 'mp4', audio: true },
+  );
 
   for (const args of [direct, relay]) {
     assert.deepEqual(mappedStreams(args), ['0:v:0?']);
@@ -610,9 +614,13 @@ test('preview builders keep full preview at source frame rate and use low-load c
     assert.equal(args[args.indexOf('-boundary_tag') + 1], 'streamhub-preview');
     assert.equal(args.at(-1), 'pipe:1');
   }
-  assert.equal(monitor[monitor.indexOf('-vf') + 1], 'fps=2,scale=trunc(min(480\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
+  assert.equal(monitor[monitor.indexOf('-vf') + 1], 'fps=1,scale=trunc(min(480\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
   assert.equal(monitor[monitor.indexOf('-q:v') + 1], '8');
   assert.equal(monitor.includes('-an'), true);
+  assert.deepEqual(mappedStreams(withAudio), ['0:v:0?', '0:a:0?']);
+  assert.equal(withAudio[withAudio.indexOf('-c:a') + 1], 'aac');
+  assert.equal(withAudio[withAudio.indexOf('-ar') + 1], '48000');
+  assert.equal(withAudio[withAudio.indexOf('-ac') + 1], '2');
 });
 
 test('professional rate-control modes never pass a quality number as NVENC rc', () => {

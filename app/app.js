@@ -3550,7 +3550,7 @@ function pipelineCardMonitorElements(pipelineId) {
 }
 
 function pipelineCardMonitorMessage(preview = {}) {
-  if (preview.state === 'receiving') return '低帧率实时监看';
+  if (preview.state === 'receiving') return '1 fps 实时监看';
   if (preview.state === 'no-signal') return '暂无输入源';
   if (preview.state === 'failed') return preview.message || '监看暂不可用';
   return '正在连接输入源';
@@ -3569,12 +3569,11 @@ function renderPipelineCardMonitor(pipelineId, preview = {}) {
     const details = [];
     const width = Number(preview.width);
     const height = Number(preview.height);
-    const fps = formatPreviewFps(preview.fps);
     const bitrate = Number(preview.bitrateKbps);
-    if (width > 0 && height > 0) details.push(`${width}x${height}`);
-    if (fps) details.push(`${fps} fps`);
-    if (bitrate > 0) details.push(compactBitrate(bitrate));
-    elements.meta.textContent = details.length ? details.join(' / ') : '480p / 2 fps 低负载监看';
+    if (width > 0 && height > 0) details.push(`输入 ${width}x${height}`);
+    details.push('1 fps 低负载监看');
+    if (bitrate > 0) details.push(`输入 ${compactBitrate(bitrate)}`);
+    elements.meta.textContent = details.join(' / ');
   }
 }
 
@@ -4563,6 +4562,8 @@ function renderInputPreview(preview = {}) {
   const source = $('#inputPreviewSource');
   const meta = $('#inputPreviewMeta');
   const retry = $('#retryInputPreviewBtn');
+  const audioButton = $('#inputPreviewAudioBtn');
+  const audioStatus = $('#inputPreviewAudioStatus');
   const receiving = preview.state === 'receiving';
   const width = Number(preview.width);
   const height = Number(preview.height);
@@ -4577,7 +4578,6 @@ function renderInputPreview(preview = {}) {
   const browserVideo = Boolean(preview.browserVideoUrl);
   image.hidden = true;
   video.hidden = !receiving;
-  video.muted = false;
   if (browserVideo && video.src !== preview.browserVideoUrl) video.src = preview.browserVideoUrl;
   if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) details.push(`${width} x ${height}`);
   if (fps) details.push(`${fps} fps`);
@@ -4586,10 +4586,51 @@ function renderInputPreview(preview = {}) {
     details.push(`${prefix} ${compactBitrate(bitrateKbps)}`);
   }
   if (preview.videoCodec) details.push(String(preview.videoCodec).toUpperCase());
+  if (preview.audioState === 'present' || preview.audioCodec) {
+    details.push(`音频 ${String(preview.audioCodec || '').toUpperCase() || '可用'}`);
+  } else if (preview.audioState === 'absent') {
+    details.push('无音频');
+  } else if (preview.audioState === 'detecting') {
+    details.push('正在检测音频');
+  }
   if (Number.isFinite(latencyMs) && latencyMs > 0) details.push(`约 ${Math.round(latencyMs / 100) / 10} 秒延迟`);
   meta.textContent = details.join(' · ');
   meta.hidden = !details.length;
   retry.hidden = preview.state !== 'no-signal' && preview.state !== 'failed';
+  const audioState = preview.audioState || (browserVideo ? 'unknown' : 'disabled');
+  audioButton.dataset.audioState = audioState;
+  audioButton.hidden = !receiving || ['absent', 'disabled'].includes(audioState);
+  audioStatus.hidden = !receiving;
+  if (receiving && audioState === 'absent') audioStatus.textContent = '该输入源没有音轨';
+  else if (receiving && audioState === 'detecting') audioStatus.textContent = '正在检测输入音轨…';
+  else if (receiving) updateInputPreviewAudioControl();
+}
+
+function updateInputPreviewAudioControl(message = '') {
+  const video = $('#inputPreviewVideo');
+  const button = $('#inputPreviewAudioBtn');
+  const status = $('#inputPreviewAudioStatus');
+  const unavailable = ['absent', 'disabled'].includes(button.dataset.audioState);
+  if (unavailable || video.hidden) return;
+  const listening = !video.muted && video.volume > 0;
+  button.setAttribute('aria-pressed', String(listening));
+  button.title = listening ? '关闭声音监听' : '开启声音监听';
+  button.innerHTML = `<i data-lucide="${listening ? 'volume-2' : 'volume-x'}" aria-hidden="true"></i><span>${listening ? '声音监听中' : '开启声音'}</span>`;
+  status.textContent = message || (listening ? '正在播放输入源声音' : '画面已静音，点击开启声音');
+  refreshIcons();
+}
+
+async function playInputPreviewWithAudio() {
+  const video = $('#inputPreviewVideo');
+  video.muted = false;
+  try {
+    await video.play();
+    updateInputPreviewAudioControl();
+  } catch {
+    video.muted = true;
+    await video.play().catch(() => {});
+    updateInputPreviewAudioControl('浏览器已阻止自动播放声音，点击开启声音');
+  }
 }
 
 function overlayLayoutItems(kind = overlayLayoutState.kind) {
@@ -5010,7 +5051,7 @@ async function openInputPreview() {
       const asset = findMediaAsset(formData.get('mediaId'));
       if (!asset) throw new Error('请选择有效的视频素材');
       renderInputPreview({ state: 'receiving', sourceLabel: asset.name, width: asset.width, height: asset.height, fps: asset.fps || 0, browserVideoUrl: asset.url });
-    $('#inputPreviewVideo').play().catch(() => {});
+      await playInputPreviewWithAudio();
       return;
     }
     if (inputType === 'scene') {
@@ -5018,13 +5059,13 @@ async function openInputPreview() {
       const asset = scene && scene.sourceType === 'playlist' ? findMediaAsset((scene.playlist || [])[0]) : null;
       if (asset) {
         renderInputPreview({ state: 'receiving', sourceLabel: scene.name, width: asset.width, height: asset.height, fps: asset.fps || 0, browserVideoUrl: asset.url });
-        $('#inputPreviewVideo').play().catch(() => {});
+        await playInputPreviewWithAudio();
         return;
       }
     }
     const preview = await api('/api/previews?format=mp4', {
       method: 'POST',
-      body: JSON.stringify({ ...buildPreviewRequest(form), format: 'mp4' }),
+      body: JSON.stringify({ ...buildPreviewRequest(form), format: 'mp4', audio: true }),
     });
     inputPreviewState.id = preview.id;
     renderInputPreview(preview);
@@ -5032,7 +5073,7 @@ async function openInputPreview() {
     previewVideo.hidden = false;
     previewVideo.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     previewVideo.load();
-    previewVideo.play().catch(() => {});
+    await playInputPreviewWithAudio();
     scheduleInputPreviewPoll();
   } catch (error) {
     renderInputPreview({ state: 'failed', message: friendlyPipelineError(error.message), sourceLabel: '当前输入源' });
@@ -5330,7 +5371,7 @@ async function openPipelinePreview(id) {
   try {
     const preview = await api('/api/previews?format=mp4', {
       method: 'POST',
-      body: JSON.stringify({ ...createPipelineInputPreviewRequest(pipeline), format: 'mp4' }),
+      body: JSON.stringify({ ...createPipelineInputPreviewRequest(pipeline), format: 'mp4', audio: true }),
     });
     inputPreviewState.id = preview.id;
     renderInputPreview(preview);
@@ -5338,7 +5379,7 @@ async function openPipelinePreview(id) {
     video.hidden = false;
     video.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     video.load();
-    video.play().catch(() => {});
+    await playInputPreviewWithAudio();
     scheduleInputPreviewPoll();
   } catch (error) {
     renderInputPreview({ state: 'failed', message: friendlyPipelineError(error.message), sourceLabel: describePipelineInput(pipeline) });
@@ -5813,6 +5854,24 @@ $('#refreshCaptureDevicesBtn').addEventListener('click', async () => {
 });
 $('#previewInputBtn').addEventListener('click', openInputPreview);
 $('#closeInputPreviewBtn').addEventListener('click', () => $('#inputPreviewDialog').close());
+$('#inputPreviewAudioBtn').addEventListener('click', async () => {
+  const video = $('#inputPreviewVideo');
+  if (video.muted || video.volume === 0) {
+    if (video.volume === 0) video.volume = 1;
+    video.muted = false;
+    try {
+      await video.play();
+      updateInputPreviewAudioControl();
+    } catch {
+      video.muted = true;
+      updateInputPreviewAudioControl('无法启用声音，请使用播放器音量控件重试');
+    }
+    return;
+  }
+  video.muted = true;
+  updateInputPreviewAudioControl();
+});
+$('#inputPreviewVideo').addEventListener('volumechange', () => updateInputPreviewAudioControl());
 $('#retryInputPreviewBtn').addEventListener('click', async () => {
   const pipelineId = inputPreviewState.pipelineId;
   await releaseInputPreview();

@@ -288,7 +288,11 @@ code{font-family:"SFMono-Regular",Consolas,monospace}
 .input-preview-frame img{display:block;height:100%;object-fit:contain;width:100%}
 .input-preview-frame video{display:block;height:100%;object-fit:contain;width:100%}
 .input-preview-frame p{margin:0;padding:16px;text-align:center}
-.input-preview-actions{display:flex;justify-content:flex-end}
+.input-preview-actions{align-items:center;display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+.input-preview-audio-status{color:var(--muted);flex:1 1 240px;font-size:13px;margin-right:auto}
+.input-preview-audio-button{align-items:center;display:inline-flex;gap:7px}
+.input-preview-audio-button svg{height:16px;width:16px}
+.input-preview-audio-button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
 .overlay-layout-dialog{background:var(--surface);border:0;border-radius:12px;color:var(--ink);max-height:calc(100vh - 32px);max-width:min(1100px,calc(100vw - 32px));padding:0;width:100%}
 .overlay-layout-dialog::backdrop{background:rgba(16,24,40,.56)}
 .overlay-layout-shell{display:grid;gap:16px;padding:22px}

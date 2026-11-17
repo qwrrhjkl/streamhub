@@ -187,7 +187,7 @@ test('publishes bounded Chinese diagnostics without source addresses or process 
   const descriptor = previews.describe(preview.id);
 
   assert.deepEqual(Object.keys(descriptor).sort(), [
-    'audioCodec', 'bitrateKbps', 'bitrateSource', 'fps', 'height', 'id',
+    'audioCodec', 'audioState', 'bitrateKbps', 'bitrateSource', 'fps', 'height', 'id',
     'latencyMs', 'message', 'sourceLabel', 'state', 'videoCodec', 'width',
   ]);
   assert.equal(descriptor.state, 'failed');
@@ -195,7 +195,7 @@ test('publishes bounded Chinese diagnostics without source addresses or process 
   assert.doesNotMatch(JSON.stringify(descriptor), /origin|secret|args/i);
 });
 
-test('monitor preview is a separate low-frame session and publishes input metadata', () => {
+test('monitor preview is a separate one-frame session and publishes input metadata', () => {
   const { previews, child, spawned } = createPreviewHarness();
   const input = { type: 'url', url: 'rtmp://origin.example.com/live/pgm' };
   const full = previews.start({ input });
@@ -203,7 +203,7 @@ test('monitor preview is a separate low-frame session and publishes input metada
 
   assert.notEqual(full.id, monitor.id);
   assert.equal(spawned.length, 2);
-  assert.match(spawned[1].args[spawned[1].args.indexOf('-vf') + 1], /^fps=2,scale=.*480/);
+  assert.match(spawned[1].args[spawned[1].args.indexOf('-vf') + 1], /^fps=1,scale=.*480/);
   child.stderr.emit('data', Buffer.from('Stream #0:0: Video: h264, yuv420p, 1920x1080, 8000 kb/s, 59.94 fps\n'));
   const descriptor = previews.describe(monitor.id);
   assert.equal(descriptor.width, 1920);
@@ -213,6 +213,33 @@ test('monitor preview is a separate low-frame session and publishes input metada
   assert.equal(descriptor.bitrateSource, 'input');
   assert.equal(descriptor.videoCodec, 'h264');
   assert.equal(descriptor.latencyMs, 1500);
+  assert.equal(descriptor.audioState, 'disabled');
+});
+
+test('audio preview reports present and absent input tracks without making audio mandatory', () => {
+  const withAudio = createPreviewHarness();
+  const present = withAudio.previews.start({
+    input: { type: 'url', url: 'rtmp://origin.example.com/live/with-audio' },
+    format: 'mp4',
+    audio: true,
+  });
+  withAudio.child.stderr.emit('data', Buffer.from([
+    'Stream #0:1: Audio: aac, 48000 Hz, stereo, fltp, 128 kb/s',
+    'Output #0, mp4, to pipe:1:',
+    '',
+  ].join('\n')));
+  assert.equal(withAudio.previews.describe(present.id).audioState, 'present');
+  assert.equal(withAudio.previews.describe(present.id).audioCodec, 'aac');
+
+  const withoutAudio = createPreviewHarness();
+  const absent = withoutAudio.previews.start({
+    input: { type: 'url', url: 'rtmp://origin.example.com/live/video-only' },
+    format: 'mp4',
+    audio: true,
+  });
+  withoutAudio.child.stderr.emit('data', Buffer.from('Output #0, mp4, to pipe:1:\n'));
+  assert.equal(withoutAudio.previews.describe(absent.id).audioState, 'absent');
+  assert.equal(withoutAudio.spawned[0].args.includes('0:a:0?'), true);
 });
 
 test('classifies a missing input signal separately from a failed process', () => {

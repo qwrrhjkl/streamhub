@@ -902,7 +902,7 @@ function buildSharedRelayArgs(
 function previewOutputArgs({ audio = false, format = 'mpjpeg', monitor = false } = {}) {
   const wantsMp4 = String(format || '').toLowerCase() === 'mp4';
   const maxWidth = monitor ? 480 : 1280;
-  const videoFilter = `${monitor ? 'fps=2,' : ''}scale=trunc(min(${maxWidth}\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease`;
+  const videoFilter = `${monitor ? 'fps=1,' : ''}scale=trunc(min(${maxWidth}\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease`;
   return [
     '-map', '0:v:0?',
     ...(wantsMp4 && audio ? ['-map', '0:a:0?'] : ['-an']),

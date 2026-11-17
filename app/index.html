@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-sidebar-switch-controls">
+  <link rel="stylesheet" href="/styles.css?v=20261117-audio-monitor-preview">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -694,6 +694,10 @@
       </div>
       <div class="input-preview-meta" id="inputPreviewMeta" hidden></div>
       <div class="input-preview-actions">
+        <span class="input-preview-audio-status" id="inputPreviewAudioStatus" role="status" aria-live="polite" hidden></span>
+        <button class="input-preview-audio-button" id="inputPreviewAudioBtn" type="button" aria-pressed="false" title="开启声音监听" hidden>
+          <i data-lucide="volume-2" aria-hidden="true"></i><span>监听声音</span>
+        </button>
         <button id="retryInputPreviewBtn" type="button" hidden>重试</button>
       </div>
     </div>
@@ -821,6 +825,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-sidebar-switch-controls"></script>
+  <script src="/app.js?v=20261117-audio-monitor-preview"></script>
 </body>
 </html>

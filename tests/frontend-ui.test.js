@@ -229,7 +229,7 @@ test('pipeline editor is modular and card monitoring is bounded and visibility-a
   assert.match(app, /maxActive:\s*6/);
   assert.match(appFunctionSource('syncPipelineCardMonitors'), /IntersectionObserver/);
   assert.match(appFunctionSource('startPipelineCardMonitor'), /monitor:\s*true/);
-  assert.match(appFunctionSource('renderPipelineCardMonitor'), /480p \/ 2 fps 低负载监看/);
+  assert.match(appFunctionSource('renderPipelineCardMonitor'), /1 fps 低负载监看/);
   assert.match(appFunctionSource('pipelineCardMonitorMessage'), /暂无输入源/);
   assert.match(css, /@media\(max-width:900px\)[\s\S]*\.pipeline-editor-nav\{[^}]*flex-direction:row/);
 });
@@ -1463,6 +1463,9 @@ test('distribution input controls provide an accessible preview dialog', () => {
   assert.match(html, /<dialog[^>]+id="inputPreviewDialog"[^>]+aria-labelledby="inputPreviewTitle"/);
   assert.match(html, /id="inputPreviewImage"/);
   assert.match(html, /id="inputPreviewStatus"[^>]+role="status"/);
+  assert.match(html, /id="inputPreviewVideo"[^>]+controls[^>]+playsinline/);
+  assert.match(html, /id="inputPreviewAudioBtn"[^>]+aria-pressed="false"/);
+  assert.match(html, /id="inputPreviewAudioStatus"[^>]+role="status"/);
   assert.match(html, /id="retryInputPreviewBtn"/);
   assert.match(css, /\.input-preview-frame\{[^}]*aspect-ratio:16\/9/);
 });
@@ -1481,6 +1484,12 @@ test('input preview reuses the live form payload and releases its stream on clos
   assert.match(app, /\/api\/previews\/\$\{encodeURIComponent\(id\)\}\/stop/);
   assert.match(app, /inputPreviewDialog'\)\.addEventListener\('close'/);
   assert.match(app, /window\.addEventListener\('pagehide'/);
+  assert.match(appFunctionSource('openInputPreview'), /format: 'mp4', audio: true/);
+  assert.match(appFunctionSource('openPipelinePreview'), /format: 'mp4', audio: true/);
+  assert.match(appFunctionSource('startPipelineCardMonitor'), /format: 'mjpeg', monitor: true/);
+  assert.doesNotMatch(appFunctionSource('startPipelineCardMonitor'), /audio: true/);
+  assert.match(appFunctionSource('playInputPreviewWithAudio'), /video\.muted = true/);
+  assert.match(appFunctionSource('renderInputPreview'), /该输入源没有音轨/);
 });
 
 test('form input preview releases the edited task card monitor before opening capture hardware', () => {
