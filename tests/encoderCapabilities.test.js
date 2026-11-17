@@ -98,3 +98,17 @@ test('capability detection exposes concise hardware guidance instead of raw FFmp
   assert.equal(nvenc.reason, 'NVIDIA 驱动未就绪或 GPU 不可见');
   assert.doesNotMatch(nvenc.reason, /CUDA_ERROR|stack/i);
 });
+
+test('capability detection retains an early GPU diagnostic before a long FFmpeg trailer', () => {
+  const runner = (command, args) => {
+    if (args.includes('-encoders')) return { status: 0, stdout: ' V..... libx264\n V....D h264_nvenc\n', stderr: '' };
+    return {
+      status: 1,
+      stdout: '',
+      stderr: `cuInit failed: CUDA_ERROR_NO_DEVICE\n${'generic encoder shutdown trailer '.repeat(30)}`,
+    };
+  };
+  const nvenc = detectEncoderCapabilities(runner).find(item => item.id === 'h264_nvenc');
+  assert.equal(nvenc.available, false);
+  assert.equal(nvenc.reason, 'NVIDIA 驱动未就绪或 GPU 不可见');
+});

@@ -9,7 +9,14 @@ const ENCODERS = [
 ];
 
 function diagnosticText(result) {
-  return String(result && (result.error?.message || result.stderr) || '').trim().slice(-500);
+  const text = String(result && (result.error?.message || result.stderr) || '').trim();
+  const hardwareLine = text.split(/\r?\n/).find(line => (
+    /cuda|nvidia|libcuda|no device|driver|quick sync|qsv|amf/i.test(line)
+  ));
+  if (!hardwareLine) return text.slice(-500);
+  const marker = hardwareLine.trim().slice(0, 220);
+  const tail = text.slice(-260);
+  return `${marker}\n${tail}`.slice(0, 500);
 }
 
 function listCompiledEncoders(run = spawnSync, binaries = resolveMediaBinaries()) {
