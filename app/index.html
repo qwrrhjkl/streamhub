@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-task-cards">
+  <link rel="stylesheet" href="/styles.css?v=20261117-appliance-console">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -47,24 +47,41 @@
       <img class="brand-mark" src="/assets/streamhub-logo.png" alt="StreamHub">
       <div>
         <strong>StreamHub</strong>
-        <span>直播推流工作台</span>
+        <span>专业直播编排终端</span>
       </div>
     </div>
     <nav class="nav" id="nav" aria-label="主导航">
-      <button data-view="dashboard" class="active">总览</button>
-      <button data-view="rooms">直播间</button>
-      <button data-view="destinations">推流平台</button>
-      <button data-view="distribution">分发推流</button>
-      <button data-view="scenes">画面场景</button>
-      <button data-view="monitor">推流状态</button>
-      <button data-view="devices">设备</button>
-      <button data-view="logs">日志</button>
+      <span class="nav-section-label">控制中心</span>
+      <button data-view="dashboard" class="active"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>系统总览</span></button>
+      <button data-view="distribution"><i data-lucide="radio-tower" aria-hidden="true"></i><span>分发任务</span></button>
+      <span class="nav-section-label">信号编排</span>
+      <button data-view="rooms"><i data-lucide="square-arrow-in-down" aria-hidden="true"></i><span>输入通道</span></button>
+      <button data-view="scenes"><i data-lucide="layers-3" aria-hidden="true"></i><span>场景编排</span></button>
+      <button data-view="destinations"><i data-lucide="send" aria-hidden="true"></i><span>输出目标</span></button>
+      <span class="nav-section-label">运行维护</span>
+      <button data-view="monitor"><i data-lucide="activity" aria-hidden="true"></i><span>输出监测</span></button>
+      <button data-view="devices"><i data-lucide="cpu" aria-hidden="true"></i><span>采集设备</span></button>
+      <button data-view="logs"><i data-lucide="file-clock" aria-hidden="true"></i><span>系统日志</span></button>
     </nav>
+    <div class="sidebar-machine-status">
+      <span><i aria-hidden="true"></i>设备在线</span>
+      <small>Broadcast Control Unit</small>
+    </div>
   </aside>
 
   <main class="shell">
     <header class="console-topbar">
+      <div class="console-topbar-context">
+        <span id="topbarPageKicker">CONTROL CENTER</span>
+        <strong id="topbarPageTitle">系统总览</strong>
+      </div>
       <div class="console-topbar-actions">
+        <div class="topbar-telemetry" aria-label="设备实时状态">
+          <span class="is-online"><i data-lucide="circle-check" aria-hidden="true"></i><strong id="topbarOutputCount">0</strong> 路在线</span>
+          <span><i data-lucide="cpu" aria-hidden="true"></i>CPU <strong id="topbarCpu">--</strong></span>
+          <span><i data-lucide="microchip" aria-hidden="true"></i>GPU <strong id="topbarGpu">--</strong></span>
+          <span><i data-lucide="upload" aria-hidden="true"></i>上行 <strong id="topbarUplink">--</strong></span>
+        </div>
         <button class="theme-toggle icon-button" id="themeToggle" type="button" aria-label="切换到夜间模式" aria-pressed="false" title="切换到夜间模式">
           <i data-lucide="sun" class="theme-icon theme-icon-sun" aria-hidden="true"></i>
           <i data-lucide="moon" class="theme-icon theme-icon-moon" aria-hidden="true"></i>
@@ -88,12 +105,12 @@
       <section class="view active" id="view-dashboard">
         <div class="dashboard-command-head">
           <div>
-            <h1>运行总览</h1>
-            <p>直播接入、分发任务和输出状态集中监控。</p>
+            <h1>系统总览</h1>
+            <p>实时掌握信号接入、任务编排、输出链路和设备资源。</p>
           </div>
           <div class="dashboard-actions">
-            <button data-view="rooms" class="primary jump">创建直播间</button>
-            <button data-view="distribution" class="jump">创建分发任务</button>
+            <button data-view="rooms" class="primary jump"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button>
+            <button data-view="distribution" class="jump"><i data-lucide="radio-tower" aria-hidden="true"></i>新建分发任务</button>
           </div>
         </div>
         <div class="metrics-grid summary-grid" id="summaryCards"></div>
@@ -103,10 +120,10 @@
         <section class="panel dashboard-pipeline-panel">
           <div class="panel-head">
             <div>
-              <h2>推流任务</h2>
+              <h2>分发任务</h2>
               <p>运行、无信号回退和异常任务集中显示。</p>
             </div>
-            <button data-view="monitor" class="jump">打开推流状态</button>
+            <button data-view="monitor" class="jump">打开输出监测</button>
           </div>
           <div id="dashboardPipelineCards" class="dashboard-pipeline-list"></div>
         </section>
@@ -140,49 +157,56 @@
       </section>
 
       <section class="view" id="view-rooms">
-        <div class="page-head">
+        <div class="page-head control-page-head">
           <div>
-            <h1>直播间</h1>
-            <p>先创建本地直播间，然后用 OBS、VLC、导播台或编码器把信号推到本服务器。分辨率、帧率、码率和音频参数请在推流端设置。</p>
+            <h1>输入通道</h1>
+            <p>管理来自 OBS、导播台、编码器和其他 RTMP 设备的信号接入通道。</p>
           </div>
-          <button class="primary" data-scroll="#roomForm">新建直播间</button>
+          <button class="primary" id="newRoomBtn" type="button"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button>
         </div>
-        <div class="workspace-grid entity-workspace">
-          <form class="panel form" id="roomForm">
-            <h2 id="roomFormTitle">创建直播间</h2>
-            <label>直播间名称<input name="name" placeholder="例如：赛事主直播间"></label>
-            <label>直播间标识<input name="streamName" placeholder="例如：match-pgm，可留空自动生成"></label>
-            <p class="form-note">直播间只负责接收上游推上来的信号；分辨率、帧率、码率和音频参数请在终端推流端设置。</p>
+        <div class="entity-control-workspace">
+          <form class="panel form entity-form-panel" id="roomForm" hidden>
+            <div class="entity-form-heading">
+              <div><h2 id="roomFormTitle">创建输入通道</h2><p>生成固定接入地址和安全密钥，供上游设备长期使用。</p></div>
+              <button class="icon-button" id="closeRoomFormBtn" type="button" aria-label="关闭输入通道编辑" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <label>通道名称<input name="name" placeholder="例如：赛事主信号"></label>
+            <label>通道标识<input name="streamName" placeholder="例如：match-pgm，可留空自动生成"></label>
+            <p class="form-note">输入通道负责接收上游设备的信号；分辨率、帧率、码率和音频参数由上游推流端设置。</p>
             <div class="form-row">
               <button class="primary" id="roomSubmitBtn">保存直播间</button>
               <button type="button" id="cancelRoomEditBtn" hidden>取消修改</button>
             </div>
           </form>
-          <div class="panel">
-            <div class="panel-head">
+          <section class="entity-board">
+            <div class="entity-board-head">
               <div>
-                <h2>本地直播间列表</h2>
-                <p>推流服务器地址和密钥会长期保存，刷新页面不会丢失。</p>
+                <h2>接入通道</h2>
+                <p id="roomBoardSummary">正在读取通道...</p>
               </div>
+              <span><i data-lucide="shield-check" aria-hidden="true"></i>固定地址与密钥</span>
             </div>
-            <div id="roomCards" class="cards"></div>
-          </div>
+            <div id="roomCards" class="entity-card-grid"></div>
+          </section>
         </div>
       </section>
 
       <section class="view" id="view-destinations">
-        <div class="page-head">
+        <div class="page-head control-page-head">
           <div>
-            <h1>推流平台</h1>
-            <p>统一管理需要推送的目标平台，支持 RTMP、RTMPS、SRT，以及录制文件路径。</p>
+            <h1>输出目标</h1>
+            <p>集中管理直播平台、专线 SRT 和本地录制等所有输出端点。</p>
           </div>
-          <button class="primary" data-scroll="#destinationForm">新增平台</button>
+          <button class="primary" id="newDestinationBtn" type="button"><i data-lucide="plus" aria-hidden="true"></i>新建输出目标</button>
         </div>
-        <div class="workspace-grid entity-workspace">
-          <form class="panel form" id="destinationForm">
-            <h2 id="destinationFormTitle">新增平台</h2>
+        <div class="entity-control-workspace">
+          <form class="panel form entity-form-panel" id="destinationForm" hidden>
+            <div class="entity-form-heading">
+              <div><h2 id="destinationFormTitle">新建输出目标</h2><p>配置平台协议、服务器地址和鉴权信息。</p></div>
+              <button class="icon-button" id="closeDestinationFormBtn" type="button" aria-label="关闭输出目标编辑" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
             <div class="compact-grid">
-              <label>平台名称<input name="name" placeholder="例如：主推、平台 A"></label>
+              <label>目标名称<input name="name" placeholder="例如：主平台、制作中心 SRT"></label>
               <label>协议<select name="protocol"><option value="rtmp">RTMP</option><option value="rtmps">RTMPS</option><option value="srt">SRT</option><option value="file">本地文件</option></select></label>
               <label>服务器地址<input name="server" placeholder="rtmp://push.example.com/live"></label>
               <label>推流密钥<input name="streamKey" placeholder="例如：abcd1234"></label>
@@ -194,10 +218,10 @@
             </div>
           </form>
 
-          <div class="panel">
-            <h2>平台列表</h2>
-            <div id="destinationCards" class="cards"></div>
-          </div>
+          <section class="entity-board">
+            <div class="entity-board-head"><div><h2>目标端点</h2><p id="destinationBoardSummary">正在读取输出目标...</p></div><span><i data-lucide="route" aria-hidden="true"></i>多协议输出</span></div>
+            <div id="destinationCards" class="entity-card-grid"></div>
+          </section>
         </div>
       </section>
 
@@ -239,7 +263,7 @@
             <label>直播名称<input name="name" placeholder="例如：PGM 分发任务"></label>
             <label>输入源类型
               <select name="inputType" id="inputType">
-                <option value="room">本地直播间</option>
+                <option value="room">输入通道 / RTMP</option>
                 <option value="url">RTMP/SRT/HLS URL 流</option>
                 <option value="file">视频素材</option>
                 <option value="capture">采集卡信号</option>
@@ -248,7 +272,7 @@
             </label>
 
             <div class="input-mode" data-input-mode="room">
-              <label>选择直播间<select name="roomId" id="pipelineRoom"></select></label>
+              <label>选择输入通道<select name="roomId" id="pipelineRoom"></select></label>
             </div>
             <div class="input-mode" data-input-mode="url" hidden>
               <label>URL 输入<input name="url" placeholder="rtmp://...、srt://... 或 https://..."></label>
@@ -319,13 +343,13 @@
             </div>
 
             <div class="destination-picker-box">
-              <label>选择推流平台<select id="destinationPicker"></select></label>
-              <button type="button" id="addDestinationBtn">添加平台</button>
+              <label>选择输出目标<select id="destinationPicker"></select></label>
+              <button type="button" id="addDestinationBtn">添加目标</button>
               <div class="selected-destination-panel">
-                <span>已选平台</span>
+                <span>已选输出目标</span>
                 <div id="selectedDestinationList" class="selected-destinations"></div>
               </div>
-              <p class="form-help">先在下拉框里选一个平台，再点“添加平台”。可以重复添加多个平台。</p>
+              <p class="form-help">从下拉框选择输出目标并添加；同一任务可配置多个目标端点。</p>
             </div>
             <label>运行模式<select name="mode"><option value="shared-relay">共享转推</option><option value="direct">直连推送</option></select></label>
 
@@ -424,7 +448,7 @@
       <section class="view" id="view-scenes">
         <div class="page-head">
           <div>
-            <h1>画面场景</h1>
+            <h1>场景编排</h1>
             <p>管理重播视频、网络流和水印，在运行中的共享转推任务里完成 Preview / Program 切换，并录制当前最终播出画面。</p>
           </div>
           <button class="primary" id="newSceneBtn" type="button">新建场景</button>
@@ -555,7 +579,7 @@
       <section class="view operations-workspace" id="view-monitor">
         <div class="page-head">
           <div>
-            <h1>推流状态</h1>
+            <h1>输出监测</h1>
             <p>查看每路 RTMP/RTMPS 输出按远端 TCP 确认字节计算的实际输出码率和 FPS，以及本次推流开始以来、在确认本地丢弃后累计的估算网络丢帧数、估算网络丢帧率、运行时长和最近错误。每路输出都有独立折线图，方便判断单个平台是否异常。</p>
           </div>
         </div>
@@ -590,7 +614,7 @@
       <section class="view operations-workspace" id="view-devices">
         <div class="page-head">
           <div>
-            <h1>设备</h1>
+            <h1>采集设备</h1>
             <p>采集卡和音频设备检测。没有安装 v4l-utils 或 ALSA 工具时会显示安装提示。</p>
           </div>
         </div>
@@ -600,7 +624,7 @@
       <section class="view operations-workspace" id="view-logs">
         <div class="page-head">
           <div>
-            <h1>日志</h1>
+            <h1>系统日志</h1>
             <p>查看 StreamHub、FFmpeg 和 RTMP 接入服务日志。</p>
           </div>
         </div>
@@ -742,10 +766,10 @@
     <div class="monitor-detail-shell">
       <header class="monitor-detail-header">
         <div>
-          <h2 id="monitorDetailTitle">推流状态详情</h2>
+          <h2 id="monitorDetailTitle">输出监测详情</h2>
           <p id="monitorDetailSubtitle">正在读取单路输出数据...</p>
         </div>
-        <button class="icon-button" type="button" id="closeMonitorDetailBtn" aria-label="关闭推流状态详情" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+        <button class="icon-button" type="button" id="closeMonitorDetailBtn" aria-label="关闭输出监测详情" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
       </header>
 
       <form class="monitor-detail-controls" id="monitorDetailRangeForm">
@@ -803,6 +827,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-task-cards"></script>
+  <script src="/app.js?v=20261117-appliance-console"></script>
 </body>
 </html>

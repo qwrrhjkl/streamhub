@@ -2,6 +2,16 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const THEME_STORAGE_KEY = 'streamhub-console-theme';
+const VIEW_META = {
+  dashboard: { title: '系统总览', kicker: 'CONTROL CENTER' },
+  distribution: { title: '分发任务', kicker: 'OUTPUT ORCHESTRATION' },
+  rooms: { title: '输入通道', kicker: 'SIGNAL INGEST' },
+  scenes: { title: '场景编排', kicker: 'SCENE COMPOSER' },
+  destinations: { title: '输出目标', kicker: 'DESTINATION ROUTING' },
+  monitor: { title: '输出监测', kicker: 'OUTPUT TELEMETRY' },
+  devices: { title: '采集设备', kicker: 'CAPTURE HARDWARE' },
+  logs: { title: '系统日志', kicker: 'SYSTEM EVENTS' },
+};
 
 function currentTheme() {
   return $('#consoleApp')?.dataset.theme === 'night' ? 'night' : 'day';
@@ -463,6 +473,10 @@ function show(view) {
   if (view === 'system') view = 'dashboard';
   $$('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   $$('#nav button').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+  const meta = VIEW_META[view] || VIEW_META.dashboard;
+  if ($('#topbarPageTitle')) $('#topbarPageTitle').textContent = meta.title;
+  if ($('#topbarPageKicker')) $('#topbarPageKicker').textContent = meta.kicker;
+  if ($('#consoleApp')) $('#consoleApp').dataset.currentView = view;
   if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
@@ -925,7 +939,7 @@ function renderSystemStatus() {
 }
 
 function systemStatusViewActive() {
-  return authState.authenticated && $('#view-dashboard').classList.contains('active');
+  return authState.authenticated;
 }
 
 async function loadSystemStatus({ silent = false } = {}) {
@@ -1008,7 +1022,7 @@ function validatePipelineInput(values, currentState = state || {}) {
   const inputType = get('inputType');
   if (inputType === 'room') {
     const room = (currentState.rooms || []).find(item => item.id === get('roomId'));
-    return room && room.enabled !== false ? '' : '请选择有效且已启用的本地直播间';
+    return room && room.enabled !== false ? '' : '请选择有效且已启用的输入通道';
   }
   if (inputType === 'legacy') {
     const source = (currentState.sources || []).find(item => item.id === get('sourceId'));
@@ -1541,8 +1555,8 @@ function fillSettingsForm(form, settings = {}) {
 }
 
 function updateRoomEditUi() {
-  $('#roomFormTitle').textContent = editingRoomId ? '修改直播间' : '创建直播间';
-  $('#roomSubmitBtn').textContent = editingRoomId ? '保存修改' : '保存直播间';
+  $('#roomFormTitle').textContent = editingRoomId ? '修改输入通道' : '创建输入通道';
+  $('#roomSubmitBtn').textContent = editingRoomId ? '保存修改' : '保存输入通道';
   $('#cancelRoomEditBtn').hidden = !editingRoomId;
 }
 
@@ -1550,6 +1564,29 @@ function resetRoomForm() {
   editingRoomId = null;
   $('#roomForm').reset();
   updateRoomEditUi();
+}
+
+function setEntityFormVisible(selector, visible, { focus = false } = {}) {
+  const form = $(selector);
+  if (!form) return;
+  form.hidden = !visible;
+  if (!visible) return;
+  refreshIcons();
+  requestAnimationFrame(() => {
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (focus && form.elements.name) form.elements.name.focus();
+  });
+}
+
+function openNewRoomForm() {
+  resetRoomForm();
+  show('rooms');
+  setEntityFormVisible('#roomForm', true, { focus: true });
+}
+
+function closeRoomForm() {
+  resetRoomForm();
+  setEntityFormVisible('#roomForm', false);
 }
 
 function updatePipelineEditUi() {
@@ -1618,8 +1655,8 @@ function closePipelineForm() {
 
 function updateDestinationEditUi() {
   const editing = Boolean(editingDestinationId);
-  $('#destinationFormTitle').textContent = editing ? '修改平台' : '新增平台';
-  $('#destinationSubmitBtn').textContent = editing ? '保存修改' : '保存平台';
+  $('#destinationFormTitle').textContent = editing ? '修改输出目标' : '新建输出目标';
+  $('#destinationSubmitBtn').textContent = editing ? '保存修改' : '保存输出目标';
   $('#cancelDestinationEditBtn').hidden = !editing;
 }
 
@@ -1627,6 +1664,17 @@ function resetDestinationForm() {
   editingDestinationId = null;
   $('#destinationForm').reset();
   updateDestinationEditUi();
+}
+
+function openNewDestinationForm() {
+  resetDestinationForm();
+  show('destinations');
+  setEntityFormVisible('#destinationForm', true, { focus: true });
+}
+
+function closeDestinationForm() {
+  resetDestinationForm();
+  setEntityFormVisible('#destinationForm', false);
 }
 
 async function loadState() {
@@ -2569,7 +2617,7 @@ function describePipelineInput(pipeline) {
   const input = pipeline.input || {};
   if (input.type === 'room') {
     const room = (state.rooms || []).find(item => item.id === input.roomId);
-    return room ? `本地直播间：${room.name}` : '本地直播间：未找到';
+    return room ? `输入通道：${room.name}` : '输入通道：未找到';
   }
   if (input.type === 'url') return `URL：${input.url || '-'}`;
   if (input.type === 'file') return `本地视频：${input.path || input.url || '-'}`;
@@ -2627,7 +2675,7 @@ function renderSummary() {
     actualBitrateStatus: monitor.totals.actualBitrateSampling ? 'sampling' : 'unavailable',
   });
   $('#summaryCards').innerHTML = [
-    metric('本地直播间', (state.rooms || []).length),
+    metric('输入通道', (state.rooms || []).length),
     metric('运行任务', monitor.totals.pipelines || 0),
     metric('输出路数', monitor.totals.outputs || 0),
     metric('实际输出总码率', totalBitrate),
@@ -2657,6 +2705,7 @@ function renderSummary() {
     </article>`;
   }).join('');
   $('#dashboardPipelineCards').innerHTML = cards || '<p class="dashboard-empty">还没有分发任务。</p>';
+  renderTopbarTelemetry();
 }
 
 function dashboardResourceCard(resource) {
@@ -2675,6 +2724,25 @@ function renderDashboardResources() {
   const preferred = resources.filter(resource => resource.type !== 'gpu' || systemResourceAvailable(resource));
   $('#dashboardResources').innerHTML = preferred.slice(0, 6).map(dashboardResourceCard).join('') || '<p class="dashboard-empty">正在读取系统资源...</p>';
   renderDashboardNetwork(snapshot);
+  renderTopbarTelemetry();
+}
+
+function renderTopbarTelemetry() {
+  const snapshot = systemStatusState.snapshot || {};
+  const monitor = state && state.monitor || { totals: {} };
+  const cpuValue = Number(snapshot.cpu && snapshot.cpu.usagePercent);
+  const gpuDevices = Array.isArray(snapshot.gpu && snapshot.gpu.devices) ? snapshot.gpu.devices : [];
+  const gpuValue = Number(gpuDevices[0] && gpuDevices[0].usagePercent);
+  const interfaces = Array.isArray(snapshot.network && snapshot.network.interfaces) ? snapshot.network.interfaces : [];
+  const networkDevice = interfaces.find(item => item.name === 'enp86s0') || interfaces[0];
+  const setText = (selector, value) => {
+    const element = $(selector);
+    if (element) element.textContent = value;
+  };
+  setText('#topbarOutputCount', String(Number(monitor.totals && monitor.totals.outputs) || 0));
+  setText('#topbarCpu', Number.isFinite(cpuValue) ? `${Math.round(cpuValue)}%` : '--');
+  setText('#topbarGpu', Number.isFinite(gpuValue) ? `${Math.round(gpuValue)}%` : '--');
+  setText('#topbarUplink', networkDevice ? formatSystemNetworkRate(networkDevice.sendBytesPerSec, '--') : '--');
 }
 
 function drawDashboardNetworkChart(canvas, history) {
@@ -2809,13 +2877,13 @@ function renderDestinationPicker() {
 
   const destinations = state.destinations || [];
   if (!destinations.length) {
-    picker.innerHTML = '<option value="">还没有推流平台，请先新增</option>';
+    picker.innerHTML = '<option value="">还没有输出目标，请先新建</option>';
     picker.disabled = true;
     return;
   }
 
   picker.disabled = false;
-  picker.innerHTML = '<option value="">选择一个推流平台</option>' + destinations.map(destination => {
+  picker.innerHTML = '<option value="">选择一个输出目标</option>' + destinations.map(destination => {
     const alreadySelected = selectedDestinationIds.includes(destination.id);
     const disabled = destination.enabled === false || alreadySelected;
     const suffix = destination.enabled === false ? '（已禁用）' : alreadySelected ? '（已添加）' : '';
@@ -2829,7 +2897,7 @@ function renderSelectedDestinations() {
 
   const destinations = selectedDestinationIds.map(id => findDestination(id)).filter(Boolean);
   if (!destinations.length) {
-    list.innerHTML = '<p class="empty-selection">还没有添加推流平台。请选择一个平台后点击“添加平台”。</p>';
+    list.innerHTML = '<p class="empty-selection">还没有添加输出目标。请选择目标后点击“添加目标”。</p>';
     return;
   }
 
@@ -2855,6 +2923,7 @@ function handleRendererAction(button) {
   if (action === 'copy-text') return copyText(value);
   if (action === 'remove-selected-destination') return removeSelectedDestination(id);
   if (action === 'edit-room') return editRoom(id);
+  if (action === 'create-room') return openNewRoomForm();
   if (action === 'toggle-room') return toggleRoom(id, enabled === 'true');
   if (action === 'edit-pipeline') return editPipeline(id);
   if (action === 'start-pipeline') return startPipeline(id);
@@ -2864,6 +2933,7 @@ function handleRendererAction(button) {
   if (action === 'create-pipeline') return openNewPipelineForm();
   if (action === 'refresh-program') return refreshPipelineProgram(id);
   if (action === 'edit-destination') return editDestination(id);
+  if (action === 'create-destination') return openNewDestinationForm();
   if (action === 'toggle-destination') return toggleDestination(id, enabled === 'true');
   if (action === 'delete-item') return deleteItem(collection, id);
   if (action === 'select-scene') return selectStudioScene(id);
@@ -2905,11 +2975,11 @@ function bindRendererActions(container) {
 function addSelectedDestination() {
   const picker = $('#destinationPicker');
   const id = picker && picker.value;
-  if (!id) return alert('请先从下拉菜单选择一个推流平台');
+  if (!id) return alert('请先从下拉菜单选择一个输出目标');
   const destination = findDestination(id);
-  if (!destination) return alert('未找到这个推流平台，请刷新后重试');
-  if (destination.enabled === false) return alert('这个推流平台已禁用，请先启用后再添加');
-  if (selectedDestinationIds.includes(id)) return alert('这个推流平台已经添加过了');
+  if (!destination) return alert('未找到这个输出目标，请刷新后重试');
+  if (destination.enabled === false) return alert('这个输出目标已停用，请先启用后再添加');
+  if (selectedDestinationIds.includes(id)) return alert('这个输出目标已经添加过了');
   setSelectedDestinationIds([...selectedDestinationIds, id]);
 }
 
@@ -2921,29 +2991,41 @@ function renderRooms() {
   renderPipelineInputReferences();
   const rooms = state.rooms || [];
   replaceReferenceOptions($('#pipelineRoom'), rooms, Boolean(editingPipelineId));
+  const liveCount = rooms.filter(room => room.enabled !== false && room.status === 'live').length;
+  if ($('#roomBoardSummary')) $('#roomBoardSummary').textContent = `${rooms.length} 个通道 · ${liveCount} 路有信号`;
   $('#roomCards').innerHTML = rooms.map(room => {
     const info = roomPublishInfo(room);
     const status = room.enabled === false ? 'disabled' : (room.status || 'idle');
-    return `<article class="item-card entity-card">
-      <div class="panel-head">
+    const statusLabel = status === 'live' ? '信号接入中' : status === 'disabled' ? '已停用' : '等待信号';
+    return `<article class="entity-control-card input-channel-card ${escapeHtml(status)}">
+      <div class="entity-card-visual">
+        <span class="entity-card-status"><i aria-hidden="true"></i>${statusLabel}</span>
+        <div class="entity-card-symbol"><i data-lucide="radio-receiver" aria-hidden="true"></i><strong>RTMP INGEST</strong><small>固定接入通道</small></div>
+        <span class="entity-card-technical">${escapeHtml(room.streamName)} · TCP 1935</span>
+      </div>
+      <div class="entity-card-body">
+        <div class="entity-card-title">
         <div>
           <h3>${escapeHtml(room.name)}</h3>
-          <p>房间标识：<code>${escapeHtml(room.streamName)}</code></p>
+            <p>通道标识 <code>${escapeHtml(room.streamName)}</code></p>
         </div>
-        <span class="badge ${escapeHtml(status)}">${status === 'live' ? '正在推流' : status === 'disabled' ? '已禁用' : '待推流'}</span>
       </div>
-      <div class="copy-grid">
-        <div class="copy-row"><span>推流服务器</span><code>${escapeHtml(info.publishServer)}</code><button data-action="copy-text" data-value="${escapeHtml(info.publishServer)}">${iconButtonMarkup('copy', '复制')}</button></div>
-        <div class="copy-row"><span>推流密钥</span><code>${escapeHtml(info.streamKey)}</code><button data-action="copy-text" data-value="${escapeHtml(info.streamKey)}">${iconButtonMarkup('copy', '复制')}</button></div>
-        <div class="copy-row"><span>完整地址</span><code>${escapeHtml(info.publishUrl)}</code><button data-action="copy-text" data-value="${escapeHtml(info.publishUrl)}">${iconButtonMarkup('copy', '复制')}</button></div>
+        <div class="entity-copy-list">
+          <div><span>接入服务器</span><code title="${escapeHtml(info.publishServer)}">${escapeHtml(info.publishServer)}</code><button class="icon-button" data-action="copy-text" data-value="${escapeHtml(info.publishServer)}" title="复制接入服务器" aria-label="复制接入服务器"><i data-lucide="copy" aria-hidden="true"></i></button></div>
+          <div><span>安全密钥</span><code title="${escapeHtml(info.streamKey)}">${escapeHtml(info.streamKey)}</code><button class="icon-button" data-action="copy-text" data-value="${escapeHtml(info.streamKey)}" title="复制安全密钥" aria-label="复制安全密钥"><i data-lucide="copy" aria-hidden="true"></i></button></div>
+          <div><span>完整推流地址</span><code title="${escapeHtml(info.publishUrl)}">${escapeHtml(info.publishUrl)}</code><button class="icon-button" data-action="copy-text" data-value="${escapeHtml(info.publishUrl)}" title="复制完整推流地址" aria-label="复制完整推流地址"><i data-lucide="copy" aria-hidden="true"></i></button></div>
+        </div>
       </div>
-      <div class="item-actions">
-        <button data-action="edit-room" data-id="${escapeHtml(room.id)}">修改</button>
-        <button data-action="toggle-room" data-id="${escapeHtml(room.id)}" data-enabled="${room.enabled === false}">${room.enabled === false ? '启用' : '禁用'}</button>
-        <button class="danger" data-action="delete-item" data-collection="rooms" data-id="${escapeHtml(room.id)}">删除</button>
-      </div>
+      <footer class="entity-card-actions">
+        <span>${status === 'live' ? '上游设备已建立连接' : status === 'disabled' ? '通道停止接收信号' : '等待上游设备推流'}</span>
+        <div>
+          <button class="icon-button" data-action="edit-room" data-id="${escapeHtml(room.id)}" title="修改输入通道" aria-label="修改 ${escapeHtml(room.name)}"><i data-lucide="pencil" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="toggle-room" data-id="${escapeHtml(room.id)}" data-enabled="${room.enabled === false}" title="${room.enabled === false ? '启用输入通道' : '停用输入通道'}" aria-label="${room.enabled === false ? '启用' : '停用'} ${escapeHtml(room.name)}"><i data-lucide="power" aria-hidden="true"></i></button>
+          <button class="danger icon-button" data-action="delete-item" data-collection="rooms" data-id="${escapeHtml(room.id)}" title="删除输入通道" aria-label="删除 ${escapeHtml(room.name)}"><i data-lucide="trash-2" aria-hidden="true"></i></button>
+        </div>
+      </footer>
     </article>`;
-  }).join('') || '<p>还没有直播间，请先创建一个。</p>';
+  }).join('') || '<div class="entity-empty"><i data-lucide="radio-receiver" aria-hidden="true"></i><h3>还没有输入通道</h3><p>创建通道后即可获得固定 RTMP 接入地址和密钥。</p><button class="primary" type="button" data-action="create-room"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button></div>';
   bindRendererActions($('#roomCards'));
   refreshIcons();
 }
@@ -2974,7 +3056,7 @@ function pipelineStatusIsActive(status) {
 
 function pipelineInputTypeMeta(pipeline = {}) {
   const input = pipeline.input || {};
-  if (input.type === 'room') return { label: '本地直播间', icon: 'radio-tower' };
+  if (input.type === 'room') return { label: '输入通道', icon: 'radio-tower' };
   if (input.type === 'url') return { label: '网络流', icon: 'link' };
   if (input.type === 'file' || input.type === 'playlist') return { label: '视频素材', icon: 'file-video-2' };
   if (input.type === 'capture') {
@@ -3149,24 +3231,38 @@ function renderPipelineCards() {
 }
 
 function renderDestinations() {
-  $('#destinationCards').innerHTML = (state.destinations || []).map(d => {
+  const destinations = state.destinations || [];
+  const enabledCount = destinations.filter(destination => destination.enabled !== false).length;
+  if ($('#destinationBoardSummary')) $('#destinationBoardSummary').textContent = `${destinations.length} 个目标 · ${enabledCount} 个已启用`;
+  $('#destinationCards').innerHTML = destinations.map(d => {
     const target = destinationTarget(d);
-    return `<article class="item-card entity-card">
-      <div class="panel-head">
+    const enabled = d.enabled !== false;
+    const protocol = String(d.protocol || 'rtmp').toUpperCase();
+    return `<article class="entity-control-card output-target-card ${enabled ? 'enabled' : 'disabled'}">
+      <div class="entity-card-visual">
+        <span class="entity-card-status"><i aria-hidden="true"></i>${enabled ? '已启用' : '已停用'}</span>
+        <div class="entity-card-symbol"><i data-lucide="send" aria-hidden="true"></i><strong>${escapeHtml(protocol)} OUTPUT</strong><small>直播输出端点</small></div>
+        <span class="entity-card-technical">${escapeHtml(protocol)} · ${enabled ? 'READY' : 'DISABLED'}</span>
+      </div>
+      <div class="entity-card-body">
+        <div class="entity-card-title">
         <div>
           <h3>${escapeHtml(d.name)}</h3>
-          <p>协议：${escapeHtml(d.protocol || 'rtmp')}</p>
+            <p>输出协议 <code>${escapeHtml(protocol)}</code></p>
         </div>
-        <span class="badge ${d.enabled !== false ? 'live' : 'disabled'}">${d.enabled !== false ? '启用' : '禁用'}</span>
       </div>
-      <p>${escapeHtml(target || '未填写地址')}</p>
-      <div class="item-actions">
-        <button data-action="edit-destination" data-id="${escapeHtml(d.id)}">修改</button>
-        <button data-action="toggle-destination" data-id="${escapeHtml(d.id)}" data-enabled="${d.enabled === false}">${d.enabled === false ? '启用' : '禁用'}</button>
-        <button class="danger" data-action="delete-item" data-collection="destinations" data-id="${escapeHtml(d.id)}">删除</button>
+        <div class="entity-target-address"><span>目标地址</span><code title="${escapeHtml(target || '')}">${escapeHtml(target || '未填写地址')}</code></div>
       </div>
+      <footer class="entity-card-actions">
+        <span>${enabled ? '可加入分发任务' : '不会建立输出连接'}</span>
+        <div>
+          <button class="icon-button" data-action="edit-destination" data-id="${escapeHtml(d.id)}" title="修改输出目标" aria-label="修改 ${escapeHtml(d.name)}"><i data-lucide="pencil" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="toggle-destination" data-id="${escapeHtml(d.id)}" data-enabled="${d.enabled === false}" title="${enabled ? '停用输出目标' : '启用输出目标'}" aria-label="${enabled ? '停用' : '启用'} ${escapeHtml(d.name)}"><i data-lucide="power" aria-hidden="true"></i></button>
+          <button class="danger icon-button" data-action="delete-item" data-collection="destinations" data-id="${escapeHtml(d.id)}" title="删除输出目标" aria-label="删除 ${escapeHtml(d.name)}"><i data-lucide="trash-2" aria-hidden="true"></i></button>
+        </div>
+      </footer>
     </article>`;
-  }).join('') || '<p>还没有推流平台。</p>';
+  }).join('') || '<div class="entity-empty"><i data-lucide="send" aria-hidden="true"></i><h3>还没有输出目标</h3><p>添加直播平台或 SRT 端点后即可用于任务编排。</p><button class="primary" type="button" data-action="create-destination"><i data-lucide="plus" aria-hidden="true"></i>新建输出目标</button></div>';
   bindRendererActions($('#destinationCards'));
   refreshIcons();
 }
@@ -3603,7 +3699,7 @@ function renderMonitorDetail(output, range = {}, stopped = false) {
   const outputName = (output.destination && output.destination.name) || output.id || '输出';
   const status = stopped ? 'stopped' : (output.status || 'running');
 
-  $('#monitorDetailTitle').textContent = `推流状态详情：${outputName}`;
+  $('#monitorDetailTitle').textContent = `输出监测详情：${outputName}`;
   $('#monitorDetailSubtitle').textContent = `${output.pipelineName || '未命名任务'} · ${output.sourceName || '未命名输入源'}`;
   $('#monitorDetailMetrics').innerHTML = [
     ['实际输出码率', bitrateText],
@@ -4547,7 +4643,7 @@ async function startPipeline(id) {
   }
   if (!pipelineEnabledDestinations(pipeline).length) {
     editPipeline(id);
-    showPipelineValidationError('这个分发任务没有启用的输出目标，请先添加至少一个已启用的推流平台');
+    showPipelineValidationError('这个分发任务没有启用的输出目标，请先添加至少一个已启用的目标端点');
     return;
   }
   if (!confirmDangerousAction('确认开始这个分发任务？开始后会调用 FFmpeg 并向已选平台推流。')) return;
@@ -4676,7 +4772,7 @@ async function deleteItem(collection, id) {
 async function toggleRoom(id, enabled) {
   const room = (state.rooms || []).find(item => item.id === id);
   const name = room ? `“${room.name}”` : '';
-  if (!confirmDangerousAction(`确认${enabled ? '启用' : '禁用'}直播间${name}？`)) return;
+  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}输入通道${name}？`)) return;
   await api(`/api/rooms/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   await loadState();
 }
@@ -4687,14 +4783,14 @@ async function toggleDestination(id, enabled) {
   const detail = enabled
     ? '启用后，正在运行且已选择此平台的任务会立即接入该输出。'
     : '禁用后，仅该平台会立即断流，其他平台和共享中继保持运行。';
-  if (!confirmDangerousAction(`确认${enabled ? '启用' : '禁用'}推流平台${name}？\n\n${detail}`)) return;
+  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}输出目标${name}？\n\n${detail}`)) return;
   await api(`/api/destinations/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   await loadState();
 }
 
 function editDestination(id) {
   const destination = (state.destinations || []).find(item => item.id === id);
-  if (!destination) return alert('未找到推流平台');
+  if (!destination) return alert('未找到输出目标');
   editingDestinationId = id;
   const form = $('#destinationForm');
   setControlValue(form, 'name', destination.name || '');
@@ -4704,19 +4800,19 @@ function editDestination(id) {
   setControlValue(form, 'url', destination.url || '');
   updateDestinationEditUi();
   show('destinations');
-  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setEntityFormVisible('#destinationForm', true);
 }
 
 function editRoom(id) {
   const room = (state.rooms || []).find(item => item.id === id);
-  if (!room) return alert('未找到直播间');
+  if (!room) return alert('未找到输入通道');
   editingRoomId = id;
   const form = $('#roomForm');
   setControlValue(form, 'name', room.name || '');
   setControlValue(form, 'streamName', room.streamName || '');
   updateRoomEditUi();
   show('rooms');
-  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setEntityFormVisible('#roomForm', true);
 }
 
 function editPipeline(id) {
@@ -4933,8 +5029,9 @@ $('#roomForm').addEventListener('submit', async event => {
     }),
   });
   resetRoomForm();
+  setEntityFormVisible('#roomForm', false);
   await loadState();
-  showToast(wasEditing ? '直播间已修改' : '直播间已保存');
+  showToast(wasEditing ? '输入通道已修改' : '输入通道已保存');
 });
 
 $('#pipelineForm').addEventListener('submit', async event => {
@@ -4947,7 +5044,7 @@ $('#pipelineForm').addEventListener('submit', async event => {
   const encodingState = syncEncodingControls(event.target);
   if (encodingState.error) return showPipelineValidationError(encodingState.error);
   if (!pipelineEnabledDestinations({ destinationIds: selectedDestinationIds }).length) {
-    return showPipelineValidationError('请至少添加一个已启用的推流平台');
+    return showPipelineValidationError('请至少添加一个已启用的输出目标');
   }
   const submitGeneration = pipelineFormGeneration;
   const submitEditingPipelineId = editingPipelineId;
@@ -4990,8 +5087,9 @@ $('#destinationForm').addEventListener('submit', async event => {
     body: JSON.stringify(destinationPayloadFromForm(event.target, existingDestination)),
   });
   resetDestinationForm();
+  setEntityFormVisible('#destinationForm', false);
   await loadState();
-  showToast(wasEditing ? '推流平台已修改' : '推流平台已保存');
+  showToast(wasEditing ? '输出目标已修改' : '输出目标已保存');
 });
 
 $$('[data-studio-tab]').forEach(button => button.addEventListener('click', () => switchStudioTab(button.dataset.studioTab)));
@@ -5177,7 +5275,9 @@ $('#uploadSlideshowBtn').addEventListener('click', () => uploadOverlayFiles({
   kind: 'slideshow', inputId: 'slideshowFile', statusId: 'slideshowStatus', buttonId: 'uploadSlideshowBtn',
 }));
 $('#uploadNoSignalImageBtn').addEventListener('click', uploadNoSignalImage);
-$('#cancelRoomEditBtn').addEventListener('click', resetRoomForm);
+$('#newRoomBtn').addEventListener('click', openNewRoomForm);
+$('#closeRoomFormBtn').addEventListener('click', closeRoomForm);
+$('#cancelRoomEditBtn').addEventListener('click', closeRoomForm);
 $('#newPipelineBtn').addEventListener('click', openNewPipelineForm);
 $('#closePipelineFormBtn').addEventListener('click', closePipelineForm);
 $('#cancelPipelineEditBtn').addEventListener('click', closePipelineForm);
@@ -5194,7 +5294,9 @@ $('#pipelineSearchInput').addEventListener('input', event => {
   pipelineCardFilters.query = event.currentTarget.value || '';
   renderPipelineCards();
 });
-$('#cancelDestinationEditBtn').addEventListener('click', resetDestinationForm);
+$('#newDestinationBtn').addEventListener('click', openNewDestinationForm);
+$('#closeDestinationFormBtn').addEventListener('click', closeDestinationForm);
+$('#cancelDestinationEditBtn').addEventListener('click', closeDestinationForm);
 $('#applyMonitorRangeBtn').addEventListener('click', applyMonitorRange);
 $('#monitorRangePreset').addEventListener('change', handleMonitorRangePresetChange);
 $('#monitorDetailRangeForm').addEventListener('submit', applyMonitorDetailPeriod);

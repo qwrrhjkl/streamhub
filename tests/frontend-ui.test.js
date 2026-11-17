@@ -793,6 +793,38 @@ test('distribution uses a searchable status-filtered task card board with an on-
   assert.match(appFunctionSource('closePipelineForm'), /setPipelineFormVisible\(false\)/);
 });
 
+test('console uses a professional appliance shell with grouped operational navigation', () => {
+  for (const label of ['系统总览', '分发任务', '输入通道', '场景编排', '输出目标', '输出监测', '采集设备', '系统日志']) {
+    assert.match(html, new RegExp(`<span>${label}</span>`));
+  }
+  for (const id of ['topbarPageTitle', 'topbarOutputCount', 'topbarCpu', 'topbarGpu', 'topbarUplink']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /class="sidebar-machine-status"/);
+  assert.match(css, /\.console-app \.nav-section-label\{/);
+  assert.match(css, /\.console-app \.topbar-telemetry\{/);
+  assert.match(app, /function show\(view\)[\s\S]*?VIEW_META\[view\]/);
+  assert.match(appFunctionSource('renderTopbarTelemetry'), /sendBytesPerSec/);
+});
+
+test('input channels and output targets use on-demand forms and control cards', () => {
+  assert.match(html, /id="roomForm" hidden/);
+  assert.match(html, /id="destinationForm" hidden/);
+  for (const id of ['newRoomBtn', 'closeRoomFormBtn', 'roomBoardSummary', 'newDestinationBtn', 'closeDestinationFormBtn', 'destinationBoardSummary']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  const roomRenderer = appFunctionSource('renderRooms');
+  const destinationRenderer = appFunctionSource('renderDestinations');
+  assert.match(roomRenderer, /entity-control-card input-channel-card/);
+  assert.match(roomRenderer, /entity-copy-list/);
+  assert.match(roomRenderer, /data-action="create-room"/);
+  assert.match(destinationRenderer, /entity-control-card output-target-card/);
+  assert.match(destinationRenderer, /entity-target-address/);
+  assert.match(destinationRenderer, /data-action="create-destination"/);
+  assert.match(css, /\.console-app \.entity-card-grid\{/);
+  assert.match(css, /@media\(max-width:640px\)[\s\S]*\.console-app \.entity-card-actions\{/);
+});
+
 test('task card status buckets and compact bitrate labels are deterministic', () => {
   const context = appFunctions(['pipelineStatusBucket', 'pipelineStatusIsActive', 'compactBitrate']);
   assert.equal(context.pipelineStatusBucket('running'), 'running');
@@ -973,12 +1005,12 @@ test('monitor view renders per-output charts with a custom time range', () => {
   assert.doesNotMatch(html, /服务重启后当前会话历史会重新累计/);
 });
 
-test('push status navigation and headings use consistent terminology', () => {
-  assert.match(html, /<nav[^>]+id="nav"[\s\S]*?<button data-view="monitor">推流状态<\/button>/);
-  assert.match(html, /<button data-view="monitor" class="jump">打开推流状态<\/button>/);
-  assert.match(html, /id="view-monitor"[\s\S]*?<h1>推流状态<\/h1>/);
-  assert.match(html, /id="monitorDetailTitle">推流状态详情<\/h2>/);
-  assert.match(app, /推流状态详情：\$\{outputName\}/);
+test('output monitoring navigation and headings use consistent terminology', () => {
+  assert.match(html, /<nav[^>]+id="nav"[\s\S]*?<button data-view="monitor">[\s\S]*?<span>输出监测<\/span><\/button>/);
+  assert.match(html, /<button data-view="monitor" class="jump">打开输出监测<\/button>/);
+  assert.match(html, /id="view-monitor"[\s\S]*?<h1>输出监测<\/h1>/);
+  assert.match(html, /id="monitorDetailTitle">输出监测详情<\/h2>/);
+  assert.match(app, /输出监测详情：\$\{outputName\}/);
 });
 
 test('push status description explains current and cumulative metric semantics', () => {
@@ -1059,9 +1091,9 @@ test('pipeline destinations use explicit picker and selected output list', () =>
   assert.match(app, /destinationIds: selectedDestinationIds/);
 });
 
-test('push platform management lives on a dedicated page between rooms and distribution', () => {
+test('output target management lives on a dedicated signal-routing page', () => {
+  assert.ok(html.indexOf('data-view="distribution"') < html.indexOf('data-view="rooms"'));
   assert.ok(html.indexOf('data-view="rooms"') < html.indexOf('data-view="destinations"'));
-  assert.ok(html.indexOf('data-view="destinations"') < html.indexOf('data-view="distribution"'));
 
   const destinationsView = html.match(/<section class="view" id="view-destinations">[\s\S]*?<\/section>/);
   assert.ok(destinationsView, 'destination view should exist');
@@ -1395,12 +1427,13 @@ test('system history is isolated by resource and bounded to thirty points', () =
   assert.equal(histories['gpu-0'].at(-1).value, 17);
 });
 
-test('system polling is view-scoped and guarded against overlapping requests', () => {
+test('system polling feeds global telemetry and guards against overlapping requests', () => {
   assert.match(app, /let systemStatusPollPending = false/);
   assert.match(app, /function systemStatusViewActive/);
   assert.match(app, /if \(!systemStatusViewActive\(\) \|\| systemStatusPollPending\) return/);
   assert.match(app, /api\('\/api\/system-status'\)/);
-  assert.match(app, /setInterval\(\(\) => \{\s*if \(systemStatusViewActive\(\)\) loadSystemStatus\(\{ silent: true \}\);\s*\}, 2000\)/);
+  assert.match(app, /function systemStatusViewActive\(\) \{\s*return authState\.authenticated;\s*\}/);
+  assert.match(app, /setInterval\(\(\) => \{\s*if \(authState\.authenticated\) loadSystemStatus\(\{ silent: true \}\);\s*\}, 1000\)/);
 });
 
 test('system status has task-manager-style responsive resource layout', () => {
