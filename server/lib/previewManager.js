@@ -200,6 +200,7 @@ class PreviewManager {
 
     const diagnostic = diagnosticFor(line);
     if (!diagnostic) return;
+    if (session.state === 'no-signal' && diagnostic.state === 'failed') return;
     session.state = diagnostic.state;
     session.message = diagnostic.message;
     this.appendLog(session, diagnostic.state.toUpperCase());

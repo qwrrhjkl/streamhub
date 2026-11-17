@@ -228,7 +228,12 @@ test('classifies a missing input signal separately from a failed process', () =>
 test('classifies the DeckLink autodetect message as no input source', () => {
   const { previews, child } = createPreviewHarness();
   const preview = previews.start({ input: { type: 'capture', capture: { backend: 'decklink', device: 'DeckLink Duo 2 (1)' } } });
-  child.stderr.emit('data', Buffer.from('[decklink] Cannot Autodetect input stream or No signal\n'));
+  child.stderr.emit('data', Buffer.from([
+    '[decklink] Cannot Autodetect input stream or No signal',
+    '[in#0] Error opening input: Input/output error',
+    'Error opening input files: Input/output error',
+    '',
+  ].join('\n')));
 
   const descriptor = previews.describe(preview.id);
   assert.equal(descriptor.state, 'no-signal');
