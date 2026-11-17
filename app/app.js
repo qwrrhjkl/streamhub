@@ -263,7 +263,7 @@ const pipelineCardMonitorState = {
   sessions: new Map(),
   visible: new Set(),
   observer: null,
-  maxActive: 3,
+  maxActive: 6,
 };
 let pendingLiveDelayStopPipelineId = null;
 let pipelineWatermarks = [];

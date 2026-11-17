@@ -226,7 +226,7 @@ test('pipeline editor is modular and card monitoring is bounded and visibility-a
   ]) {
     assert.ok(controlMarkup(name) || pipelineForm.includes(`name="${name}"`), `${name} should exist`);
   }
-  assert.match(app, /maxActive:\s*3/);
+  assert.match(app, /maxActive:\s*6/);
   assert.match(appFunctionSource('syncPipelineCardMonitors'), /IntersectionObserver/);
   assert.match(appFunctionSource('startPipelineCardMonitor'), /monitor:\s*true/);
   assert.match(appFunctionSource('renderPipelineCardMonitor'), /480p \/ 2 fps 低负载监看/);
