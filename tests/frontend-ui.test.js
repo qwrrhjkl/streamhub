@@ -234,6 +234,27 @@ test('pipeline editor is modular and card monitoring is bounded and visibility-a
   assert.match(css, /@media\(max-width:900px\)[\s\S]*\.pipeline-editor-nav\{[^}]*flex-direction:row/);
 });
 
+test('every distribution settings module uses a supported visible icon', () => {
+  const pipelineForm = formMarkup('pipelineForm');
+  const moduleIcons = {
+    basic: 'file-pen-line',
+    input: 'radio-receiver',
+    output: 'radio-tower',
+    video: 'video',
+    audio: 'audio-lines',
+    processing: 'layers-3',
+    advanced: 'sliders-horizontal',
+  };
+  for (const [section, icon] of Object.entries(moduleIcons)) {
+    assert.match(
+      pipelineForm,
+      new RegExp(`data-pipeline-section="${section}"[^>]*><i data-lucide="${icon}"`),
+      `${section} should render its module icon`,
+    );
+  }
+  assert.doesNotMatch(pipelineForm, /data-lucide="(?:video-input|badge-hd)"/);
+});
+
 test('pipeline errors replace raw FFmpeg diagnostics with concise operator guidance', () => {
   const { friendlyPipelineError } = appFunctions(['friendlyPipelineError']);
   assert.match(friendlyPipelineError('Error setting option rc to value 22. Invalid argument'), /码率控制参数无效/);
