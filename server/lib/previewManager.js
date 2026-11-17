@@ -38,8 +38,8 @@ function normalizePreviewOptions(request = {}) {
 
 function diagnosticFor(line) {
   const text = String(line || '');
-  if (/no input signal|no signal detected|could not find input format/i.test(text)) {
-    return { state: 'no-signal', message: '未检测到输入信号' };
+  if (/no input signal|no signal detected|\bno signal\b|cannot autodetect input stream|could not find input format/i.test(text)) {
+    return { state: 'no-signal', message: '暂无输入源' };
   }
   if (/permission denied|operation not permitted/i.test(text)) {
     return { state: 'failed', message: '没有访问输入设备的权限' };

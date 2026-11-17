@@ -1324,12 +1324,18 @@ function syncEncodingControls(form = $('#pipelineForm')) {
   const selectedCapability = capabilities.encoders && capabilities.encoders[encoderProfile.encoder];
   const selectedUnavailable = capabilities.checked && selectedCapability && selectedCapability.available === false;
   let error = '';
-  if (invalidCopy) error = '原样复制不能用于采集卡输入、水印或幻灯片，请选择自动或明确的视频编码器';
+  let statusTone = '';
+  if (invalidCopy) {
+    error = '原样复制不能用于采集卡输入、水印或幻灯片，请选择自动或明确的视频编码器';
+    statusTone = 'error';
+  }
   else if (selectedUnavailable) {
     error = `${selectedCapability.label || encoderProfile.encoder} 当前不可用：${selectedCapability.reason || '硬件或 FFmpeg 不支持'}`;
+    statusTone = 'warning';
   }
   else if (mode === 'copy' && pipelineMode === 'direct') {
     error = '原样复制必须使用共享转推，直连推送只支持 CPU 或 NVENC 编码';
+    statusTone = 'error';
   }
 
   for (const encoder of ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf']) {
@@ -1345,6 +1351,7 @@ function syncEncodingControls(form = $('#pipelineForm')) {
     error = requested === 'auto'
       ? '自动模式无法识别当前输入，请选择明确的视频编码器'
       : '当前视频编码器无法识别，请选择自动或明确的视频编码器';
+    statusTone = 'error';
   }
 
   const copyMode = mode === 'copy';
@@ -1357,6 +1364,7 @@ function syncEncodingControls(form = $('#pipelineForm')) {
   const rateControl = elements.rateControl ? elements.rateControl.value : 'cbr';
   if (encoderProfile.encoder === 'h264_nvenc' && rateControl === 'abr') {
     error = 'NVENC 不支持 ABR，请选择 CBR、VBR 或恒定质量';
+    statusTone = 'error';
   }
   $$('[data-rate-field]').forEach(label => {
     const kind = label.dataset.rateField;
@@ -1387,7 +1395,8 @@ function syncEncodingControls(form = $('#pipelineForm')) {
       unsupported: '请选择明确的视频编码器',
     }[mode];
     status.textContent = error || modeText || '请选择明确的视频编码器';
-    status.classList.toggle('error', Boolean(error) || mode === 'unsupported');
+    status.classList.toggle('error', statusTone === 'error');
+    status.classList.toggle('warning', statusTone === 'warning');
   }
   return { mode, error };
 }

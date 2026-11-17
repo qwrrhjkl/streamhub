@@ -755,6 +755,8 @@ test('monitoring labels effective encoding mode and suppresses copy encoder warn
 test('encoding status and disabled settings use the existing restrained semantic tokens', () => {
   assert.match(css, /\.field-status\s*\{[^}]*font-size:13px[^}]*min-height:/);
   assert.match(css, /\.field-status\.error\s*\{[^}]*color:var\(--danger\)/);
+  assert.match(css, /\.field-status\.warning\s*\{[^}]*color:var\(--warn\)/);
+  assert.match(app, /status\.classList\.toggle\('warning', statusTone === 'warning'\)/);
   assert.match(css, /\.settings-box (?:input|select):disabled/);
 });
 

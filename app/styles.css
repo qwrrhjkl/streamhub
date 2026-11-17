@@ -138,6 +138,7 @@ th{color:var(--muted);font-weight:650}
 .settings-box{background:var(--surface-3);border:1px solid var(--line);border-radius:14px;padding:14px}
 .field-status{color:var(--muted);font-size:13px;line-height:1.5;margin:0;min-height:20px}
 .field-status.error{color:var(--danger)}
+.field-status.warning{color:var(--warn)}
 .settings-box input:disabled,.settings-box select:disabled{background:var(--surface-2);border-color:#c8d6e4;color:var(--muted);cursor:not-allowed}
 .live-delay-box{border-left:3px solid var(--accent);display:grid;gap:12px}
 .live-delay-box h3{margin:0}
