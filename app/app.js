@@ -82,7 +82,7 @@ const PARAMETER_HELP = Object.freeze({
   referenceFrames: {
     title: '参考帧数',
     description: '编码器分析多少个历史画面来提高压缩效率。数值越高，显存和解码复杂度越高。',
-    recommendation: '直播使用 3；低延迟或兼容性优先时使用 1–2。',
+    recommendation: '直播通常使用 2–3；低延迟或兼容性优先时使用 1–2。NVENC 在 1080p59.94/60、Level 4.2 下会自动限制为 2。',
   },
   lookahead: {
     title: '前向考虑',

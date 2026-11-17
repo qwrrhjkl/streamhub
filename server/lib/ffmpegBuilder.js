@@ -652,6 +652,16 @@ function videoArgs(settings, encodingPlan, overlayActive = false) {
   const adaptiveQuantization = live.adaptiveQuantization !== false;
   const sceneDetection = live.sceneDetection !== false;
   const repeatHeaders = live.repeatHeaders !== false;
+  const outputFps = Number.parseFloat(video.fps);
+  const nvencFullHd60Level42 = encoder === 'h264_nvenc'
+    && level === '4.2'
+    && String(video.outputResolution || '').trim().toLowerCase() === '1920x1080'
+    && Number.isFinite(outputFps)
+    && outputFps >= 59;
+  // Current NVENC drivers reject more than two references for this exact broadcast profile.
+  const effectiveReferenceFrames = nvencFullHd60Level42
+    ? Math.min(referenceFrames, 2)
+    : referenceFrames;
   const args = [
     '-pix_fmt', pixelFormat,
     '-color_range', colorRange,
@@ -660,7 +670,7 @@ function videoArgs(settings, encodingPlan, overlayActive = false) {
     '-profile:v', profile,
     ...(level === 'auto' ? [] : ['-level:v', level]),
     '-bf', String(bFrames),
-    '-refs', String(referenceFrames),
+    '-refs', String(effectiveReferenceFrames),
   ];
   if (video.outputResolution) args.push('-s', String(video.outputResolution));
   if (video.fps) args.push('-r', String(video.fps));

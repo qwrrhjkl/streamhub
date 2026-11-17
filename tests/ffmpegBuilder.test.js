@@ -447,6 +447,27 @@ test('buildOutputArgs selects NVENC CBR rate control with equal bitrate bounds',
   assert.equal(args.includes('-x264-params'), false);
 });
 
+test('NVENC limits reference frames for the Full HD 60 Level 4.2 compatibility profile', () => {
+  const source = { type: 'pull', url: 'rtmp://127.0.0.1/live/main' };
+  const destination = {
+    id: 'dest-1',
+    server: 'rtmp://push.example.com/live',
+    streamKey: 'room',
+  };
+  const settings = {
+    live: { videoEncoder: 'h264_nvenc', level: '4.2', referenceFrames: 3 },
+    video: { outputResolution: '1920x1080', fps: '59.94' },
+  };
+  const compatibleArgs = buildOutputArgs(source, destination, settings);
+  assert.equal(compatibleArgs[compatibleArgs.indexOf('-refs') + 1], '2');
+
+  const level51Args = buildOutputArgs(source, destination, {
+    ...settings,
+    live: { ...settings.live, level: '5.1' },
+  });
+  assert.equal(level51Args[level51Args.indexOf('-refs') + 1], '3');
+});
+
 test('buildSharedRelayArgs copies RTMP video and audio for auto without visual layers', () => {
   const channels = createRelayChannels('pipe-auto-copy', [{ id: 'dest-1' }]);
   const args = buildSharedRelayArgs({ type: 'pull', url: 'rtmp://origin.example.com/live/pgm' }, channels, {
