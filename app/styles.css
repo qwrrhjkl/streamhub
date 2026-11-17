@@ -1306,6 +1306,89 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .pipeline-editor-section .settings-box h4{color:var(--ui-ink);font-size:13px;margin:0}
 .console-app .pipeline-editor-section textarea{border-radius:6px;min-height:92px;resize:vertical}
 .console-app .pipeline-editor-section label>small{color:var(--ui-muted);font-size:10px;font-weight:500;line-height:1.45}
+.console-app .field-label-row{
+  align-items:center;
+  display:flex;
+  gap:5px;
+  justify-content:flex-start;
+  min-width:0;
+}
+.console-app .parameter-help-button{
+  align-items:center;
+  background:transparent;
+  border:0;
+  border-radius:50%;
+  color:var(--ui-muted);
+  display:inline-flex;
+  flex:0 0 auto;
+  height:20px;
+  justify-content:center;
+  min-height:20px;
+  padding:0;
+  width:20px;
+}
+.console-app .parameter-help-button svg{height:14px;width:14px}
+.console-app .parameter-help-button:hover,
+.console-app .parameter-help-button:focus-visible,
+.console-app .parameter-help-button[aria-expanded="true"]{
+  background:var(--ui-signal-soft);
+  border:0;
+  color:var(--ui-signal-dark);
+}
+.console-app .check-line .parameter-help-button{margin-left:auto}
+.console-app .parameter-help-popover{
+  background:var(--ui-surface);
+  border:1px solid var(--ui-line);
+  border-radius:10px;
+  box-shadow:0 6px 12px rgb(16 34 45 / .16);
+  color:var(--ui-ink);
+  inset:auto;
+  margin:0;
+  max-width:calc(100vw - 24px);
+  padding:0;
+  position:fixed;
+  width:360px;
+}
+.console-app .parameter-help-popover::backdrop{background:transparent}
+.console-app .parameter-help-popover>header{
+  align-items:flex-start;
+  border-bottom:1px solid var(--ui-line);
+  display:flex;
+  gap:16px;
+  justify-content:space-between;
+  padding:14px 15px 12px;
+}
+.console-app .parameter-help-popover>header>div{display:grid;gap:3px;min-width:0}
+.console-app .parameter-help-popover>header span{
+  color:var(--ui-muted);
+  font-size:10px;
+  font-weight:750;
+  letter-spacing:.04em;
+}
+.console-app .parameter-help-popover>header strong{font-size:15px;line-height:1.35}
+.console-app .parameter-help-popover>header .icon-button{flex-basis:30px;height:30px;min-height:30px;width:30px}
+.console-app .parameter-help-popover>p{
+  color:var(--ui-ink-2);
+  font-size:12px;
+  line-height:1.65;
+  margin:0;
+  padding:13px 15px 10px;
+}
+.console-app .parameter-help-recommendation{
+  align-items:flex-start;
+  background:var(--ui-signal-soft);
+  border-radius:7px;
+  color:var(--ui-signal-dark);
+  display:grid;
+  gap:9px;
+  grid-template-columns:16px minmax(0,1fr);
+  margin:0 15px 15px;
+  padding:10px 11px;
+}
+.console-app .parameter-help-recommendation>svg{height:16px;margin-top:1px;width:16px}
+.console-app .parameter-help-recommendation>div{display:grid;gap:4px;min-width:0}
+.console-app .parameter-help-recommendation strong{font-size:12px;font-weight:650;line-height:1.55;overflow-wrap:anywhere}
+.console-app[data-theme="night"] .parameter-help-popover{box-shadow:0 6px 12px rgb(0 0 0 / .38)}
 .console-app .pipeline-editor-actions{
   align-items:center;
   background:var(--ui-surface);
@@ -1347,6 +1430,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   .console-app .pipeline-editor-actions #cancelPipelineEditBtn,
   .console-app .pipeline-editor-actions #refreshBtn{order:5}
   .console-app #pipelineSectionProgress{align-self:center}
+  .console-app .parameter-help-popover{width:calc(100vw - 24px)}
 }
 .console-app .distribution-task-board{min-width:0}
 .console-app .distribution-task-board-head{

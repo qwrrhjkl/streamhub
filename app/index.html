@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-appliance-console">
+  <link rel="stylesheet" href="/styles.css?v=20261117-parameter-help">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -55,7 +55,7 @@
       <button data-view="dashboard" class="active"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>系统总览</span></button>
       <button data-view="distribution"><i data-lucide="radio-tower" aria-hidden="true"></i><span>分发任务</span></button>
       <span class="nav-section-label">信号编排</span>
-      <button data-view="rooms"><i data-lucide="square-arrow-in-down" aria-hidden="true"></i><span>输入通道</span></button>
+      <button data-view="rooms"><i data-lucide="radio-receiver" aria-hidden="true"></i><span>本地直播间</span></button>
       <button data-view="scenes"><i data-lucide="layers-3" aria-hidden="true"></i><span>场景编排</span></button>
       <button data-view="destinations"><i data-lucide="send" aria-hidden="true"></i><span>输出目标</span></button>
       <span class="nav-section-label">运行维护</span>
@@ -109,7 +109,7 @@
             <p>实时掌握信号接入、任务编排、输出链路和设备资源。</p>
           </div>
           <div class="dashboard-actions">
-            <button data-view="rooms" class="primary jump"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button>
+            <button data-view="rooms" class="primary jump"><i data-lucide="plus" aria-hidden="true"></i>新建直播间</button>
             <button data-view="distribution" class="jump"><i data-lucide="radio-tower" aria-hidden="true"></i>新建分发任务</button>
           </div>
         </div>
@@ -159,20 +159,20 @@
       <section class="view" id="view-rooms">
         <div class="page-head control-page-head">
           <div>
-            <h1>输入通道</h1>
-            <p>管理来自 OBS、导播台、编码器和其他 RTMP 设备的信号接入通道。</p>
+            <h1>本地直播间</h1>
+            <p>为 OBS、导播台和编码器创建固定的本地 RTMP 接入房间。</p>
           </div>
-          <button class="primary" id="newRoomBtn" type="button"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button>
+          <button class="primary" id="newRoomBtn" type="button"><i data-lucide="plus" aria-hidden="true"></i>新建直播间</button>
         </div>
         <div class="entity-control-workspace">
           <form class="panel form entity-form-panel" id="roomForm" hidden>
             <div class="entity-form-heading">
-              <div><h2 id="roomFormTitle">创建输入通道</h2><p>生成固定接入地址和安全密钥，供上游设备长期使用。</p></div>
-              <button class="icon-button" id="closeRoomFormBtn" type="button" aria-label="关闭输入通道编辑" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+              <div><h2 id="roomFormTitle">创建本地直播间</h2><p>生成固定接入地址和安全密钥，供上游设备长期使用。</p></div>
+              <button class="icon-button" id="closeRoomFormBtn" type="button" aria-label="关闭本地直播间编辑" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
             </div>
-            <label>通道名称<input name="name" placeholder="例如：赛事主信号"></label>
-            <label>通道标识<input name="streamName" placeholder="例如：match-pgm，可留空自动生成"></label>
-            <p class="form-note">输入通道负责接收上游设备的信号；分辨率、帧率、码率和音频参数由上游推流端设置。</p>
+            <label>直播间名称<input name="name" placeholder="例如：赛事主直播间"></label>
+            <label>直播间标识<input name="streamName" placeholder="例如：match-pgm，可留空自动生成"></label>
+            <p class="form-note">本地直播间负责接收上游设备的 RTMP 信号；分辨率、帧率、码率和音频参数由推流端设置。</p>
             <div class="form-row">
               <button class="primary" id="roomSubmitBtn">保存直播间</button>
               <button type="button" id="cancelRoomEditBtn" hidden>取消修改</button>
@@ -181,8 +181,8 @@
           <section class="entity-board">
             <div class="entity-board-head">
               <div>
-                <h2>接入通道</h2>
-                <p id="roomBoardSummary">正在读取通道...</p>
+                <h2>直播间列表</h2>
+                <p id="roomBoardSummary">正在读取直播间...</p>
               </div>
               <span><i data-lucide="shield-check" aria-hidden="true"></i>固定地址与密钥</span>
             </div>
@@ -290,8 +290,8 @@
 
                 <section class="pipeline-editor-section" data-pipeline-panel="input" hidden>
                   <header><h3>输入信号</h3><p>选择上游信号，并在保存前确认画面可用。</p></header>
-                  <label>输入源类型<select name="inputType" id="inputType"><option value="room">输入通道 / RTMP</option><option value="url">RTMP/SRT/HLS URL 流</option><option value="file">视频素材</option><option value="capture">采集卡信号</option><option value="scene">自定义场景</option></select></label>
-                  <div class="input-mode" data-input-mode="room"><label>选择输入通道<select name="roomId" id="pipelineRoom"></select></label></div>
+                  <label>输入源类型<select name="inputType" id="inputType"><option value="room">本地直播间 / RTMP</option><option value="url">RTMP/SRT/HLS URL 流</option><option value="file">视频素材</option><option value="capture">采集卡信号</option><option value="scene">自定义场景</option></select></label>
+                  <div class="input-mode" data-input-mode="room"><label>选择本地直播间<select name="roomId" id="pipelineRoom"></select></label></div>
                   <div class="input-mode" data-input-mode="url" hidden><label>URL 输入<input name="url" placeholder="rtmp://...、srt://... 或 https://..."></label></div>
                   <div class="input-mode" data-input-mode="file" hidden><label>选择视频素材<select name="mediaId" id="pipelineMedia"></select></label><label class="check-line"><input name="fileLoop" type="checkbox" checked> 循环播放</label></div>
                   <div class="input-mode" data-input-mode="capture" hidden>
@@ -331,23 +331,23 @@
                 <section class="pipeline-editor-section" data-pipeline-panel="video" hidden>
                   <header><h3>视频编码</h3><p>按编码器能力显示可用参数，避免无效组合进入 FFmpeg。</p></header>
                   <div class="compact-grid">
-                    <label>视频编码器<select name="videoEncoder" aria-describedby="encodingModeStatus"><option value="auto" selected>自动选择</option><option value="copy">copy（不转码）</option><option value="libx264">x264 软件编码</option><option value="h264_nvenc">NVIDIA NVENC</option><option value="h264_qsv">Intel Quick Sync</option><option value="h264_amf">AMD AMF</option></select></label>
-                    <label>码率控制<select name="rateControl" aria-describedby="encodingModeStatus"><option value="cbr">CBR 固定码率</option><option value="vbr">VBR 可变码率</option><option value="abr">ABR 平均码率</option><option value="crf">CRF / 恒定质量</option></select></label>
+                    <label><span class="field-label-row"><span>视频编码器</span><button class="parameter-help-button" type="button" data-parameter-help="videoEncoder" aria-label="查看视频编码器说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="videoEncoder" aria-describedby="encodingModeStatus"><option value="auto" selected>自动选择</option><option value="copy">copy（不转码）</option><option value="libx264">x264 软件编码</option><option value="h264_nvenc">NVIDIA NVENC</option><option value="h264_qsv">Intel Quick Sync</option><option value="h264_amf">AMD AMF</option></select></label>
+                    <label><span class="field-label-row"><span>码率控制</span><button class="parameter-help-button" type="button" data-parameter-help="rateControl" aria-label="查看码率控制说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="rateControl" aria-describedby="encodingModeStatus"><option value="cbr">CBR 固定码率</option><option value="vbr">VBR 可变码率</option><option value="abr">ABR 平均码率</option><option value="crf">CRF / 恒定质量</option></select></label>
                     <p id="encodingModeStatus" class="field-status full" role="status" aria-live="polite" tabindex="-1"></p>
                     <label>输出分辨率<select name="outputResolution" aria-describedby="encodingModeStatus"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
                     <label>输出帧率<select name="fps" aria-describedby="encodingModeStatus"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
-                    <label data-rate-field="bitrate">目标码率 Kbps<input name="bitrateKbps" type="number" value="8000" min="100" max="200000" aria-describedby="encodingModeStatus"></label>
-                    <label data-rate-field="maxBitrate">峰值码率 Kbps<input name="maxBitrateKbps" type="number" value="8000" min="100" max="400000" aria-describedby="encodingModeStatus"></label>
-                    <label data-rate-field="buffer">缓冲区 Kbits<input name="bufferSizeKbps" type="number" value="16000" min="100" max="800000" aria-describedby="encodingModeStatus"></label>
-                    <label data-rate-field="crf" hidden>质量值<input name="crf" type="number" value="23" min="0" max="51" step="1" aria-describedby="encodingModeStatus"></label>
-                    <label>编码档 Profile<select name="profile" aria-describedby="encodingModeStatus"><option value="baseline">Baseline</option><option value="main">Main</option><option value="high" selected>High</option></select></label>
-                    <label>Level<select name="level"><option value="auto">自动</option><option value="3.1">3.1</option><option value="4.0">4.0</option><option value="4.1">4.1</option><option value="4.2">4.2</option><option value="5.0">5.0</option><option value="5.1">5.1</option><option value="5.2">5.2</option><option value="6.0">6.0</option><option value="6.1">6.1</option><option value="6.2">6.2</option></select></label>
-                    <label>Preset<select name="preset" aria-describedby="encodingModeStatus"></select></label>
-                    <label>Tune<select name="tune"></select></label>
-                    <label data-encoder-field="multipass">多次编码<select name="multipass"><option value="disabled">单次编码</option><option value="qres">二次编码（1/4 分辨率）</option><option value="fullres">二次编码（全分辨率）</option></select></label>
-                    <label>GOP 关键帧间隔（秒）<input name="keyframeSec" type="number" value="2" min="0.5" max="10" step="0.5" aria-describedby="encodingModeStatus"></label>
-                    <label>B 帧数<input name="bFrames" type="number" value="2" min="0" max="4" step="1"></label>
-                    <label>参考帧数<input name="referenceFrames" type="number" value="3" min="1" max="16" step="1"></label>
+                    <label data-rate-field="bitrate"><span class="field-label-row"><span>目标码率 Kbps</span><button class="parameter-help-button" type="button" data-parameter-help="bitrateKbps" aria-label="查看目标码率说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="bitrateKbps" type="number" value="8000" min="100" max="200000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="maxBitrate"><span class="field-label-row"><span>峰值码率 Kbps</span><button class="parameter-help-button" type="button" data-parameter-help="maxBitrateKbps" aria-label="查看峰值码率说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="maxBitrateKbps" type="number" value="8000" min="100" max="400000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="buffer"><span class="field-label-row"><span>缓冲区 Kbits</span><button class="parameter-help-button" type="button" data-parameter-help="bufferSizeKbps" aria-label="查看码率缓冲区说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="bufferSizeKbps" type="number" value="16000" min="100" max="800000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="crf" hidden><span class="field-label-row"><span>质量值</span><button class="parameter-help-button" type="button" data-parameter-help="crf" aria-label="查看质量值说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="crf" type="number" value="23" min="0" max="51" step="1" aria-describedby="encodingModeStatus"></label>
+                    <label><span class="field-label-row"><span>编码档 Profile</span><button class="parameter-help-button" type="button" data-parameter-help="profile" aria-label="查看编码档说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="profile" aria-describedby="encodingModeStatus"><option value="baseline">Baseline</option><option value="main">Main</option><option value="high" selected>High</option></select></label>
+                    <label><span class="field-label-row"><span>Level</span><button class="parameter-help-button" type="button" data-parameter-help="level" aria-label="查看编码 Level 说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="level"><option value="auto">自动</option><option value="3.1">3.1</option><option value="4.0">4.0</option><option value="4.1">4.1</option><option value="4.2">4.2</option><option value="5.0">5.0</option><option value="5.1">5.1</option><option value="5.2">5.2</option><option value="6.0">6.0</option><option value="6.1">6.1</option><option value="6.2">6.2</option></select></label>
+                    <label><span class="field-label-row"><span>Preset</span><button class="parameter-help-button" type="button" data-parameter-help="preset" aria-label="查看 Preset 说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="preset" aria-describedby="encodingModeStatus"></select></label>
+                    <label><span class="field-label-row"><span>Tune</span><button class="parameter-help-button" type="button" data-parameter-help="tune" aria-label="查看 Tune 说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="tune"></select></label>
+                    <label data-encoder-field="multipass"><span class="field-label-row"><span>多次编码</span><button class="parameter-help-button" type="button" data-parameter-help="multipass" aria-label="查看多次编码说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="multipass"><option value="disabled">单次编码</option><option value="qres">二次编码（1/4 分辨率）</option><option value="fullres">二次编码（全分辨率）</option></select></label>
+                    <label><span class="field-label-row"><span>GOP 关键帧间隔（秒）</span><button class="parameter-help-button" type="button" data-parameter-help="keyframeSec" aria-label="查看 GOP 说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="keyframeSec" type="number" value="2" min="0.5" max="10" step="0.5" aria-describedby="encodingModeStatus"></label>
+                    <label><span class="field-label-row"><span>B 帧数</span><button class="parameter-help-button" type="button" data-parameter-help="bFrames" aria-label="查看 B 帧说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="bFrames" type="number" value="2" min="0" max="4" step="1"></label>
+                    <label><span class="field-label-row"><span>参考帧数</span><button class="parameter-help-button" type="button" data-parameter-help="referenceFrames" aria-label="查看参考帧说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="referenceFrames" type="number" value="3" min="1" max="16" step="1"></label>
                   </div>
                 </section>
 
@@ -371,14 +371,14 @@
                 <section class="pipeline-editor-section" data-pipeline-panel="advanced" hidden>
                   <header><h3>高级设置</h3><p>仅在明确了解编码器行为时调整。</p></header>
                   <div class="compact-grid">
-                    <label class="check-line"><input name="lookahead" type="checkbox"> 启用前向考虑</label>
-                    <label class="check-line"><input name="adaptiveQuantization" type="checkbox" checked> 启用自适应量化</label>
-                    <label>AQ 强度<input name="aqStrength" type="number" value="8" min="1" max="15" step="1"></label>
-                    <label class="check-line"><input name="sceneDetection" type="checkbox" checked> 启用场景检测</label>
-                    <label>输出像素格式<select name="pixelFormat"><option value="yuv420p">yuv420p</option><option value="nv12">nv12</option><option value="p010le">p010le</option><option value="yuv422p">yuv422p</option><option value="yuv444p">yuv444p</option></select></label>
-                    <label>色彩范围<select name="colorRange"><option value="tv">Limited / TV</option><option value="pc">Full / PC</option></select></label>
-                    <label class="check-line"><input name="repeatHeaders" type="checkbox" checked> 每个关键帧重发 SPS/PPS</label>
-                    <label class="full">编码器自定义参数<textarea name="customOptions" rows="4" maxlength="2048" placeholder="例如：-weighted_pred 1"></textarea><small>仅附加到视频编码器。不能覆盖输入、输出、映射、滤镜或编码器选择。</small></label>
+                    <label class="check-line"><input name="lookahead" type="checkbox"><span>启用前向考虑</span><button class="parameter-help-button" type="button" data-parameter-help="lookahead" aria-label="查看前向考虑说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></label>
+                    <label class="check-line"><input name="adaptiveQuantization" type="checkbox" checked><span>启用自适应量化</span><button class="parameter-help-button" type="button" data-parameter-help="adaptiveQuantization" aria-label="查看自适应量化说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></label>
+                    <label><span class="field-label-row"><span>AQ 强度</span><button class="parameter-help-button" type="button" data-parameter-help="aqStrength" aria-label="查看 AQ 强度说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><input name="aqStrength" type="number" value="8" min="1" max="15" step="1"></label>
+                    <label class="check-line"><input name="sceneDetection" type="checkbox" checked><span>启用场景检测</span><button class="parameter-help-button" type="button" data-parameter-help="sceneDetection" aria-label="查看场景检测说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></label>
+                    <label><span class="field-label-row"><span>输出像素格式</span><button class="parameter-help-button" type="button" data-parameter-help="pixelFormat" aria-label="查看像素格式说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="pixelFormat"><option value="yuv420p">yuv420p</option><option value="nv12">nv12</option><option value="p010le">p010le</option><option value="yuv422p">yuv422p</option><option value="yuv444p">yuv444p</option></select></label>
+                    <label><span class="field-label-row"><span>色彩范围</span><button class="parameter-help-button" type="button" data-parameter-help="colorRange" aria-label="查看色彩范围说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><select name="colorRange"><option value="tv">Limited / TV</option><option value="pc">Full / PC</option></select></label>
+                    <label class="check-line"><input name="repeatHeaders" type="checkbox" checked><span>每个关键帧重发 SPS/PPS</span><button class="parameter-help-button" type="button" data-parameter-help="repeatHeaders" aria-label="查看 SPS PPS 重发说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></label>
+                    <label class="full"><span class="field-label-row"><span>编码器自定义参数</span><button class="parameter-help-button" type="button" data-parameter-help="customOptions" aria-label="查看自定义参数说明" title="参数说明"><i data-lucide="circle-help" aria-hidden="true"></i></button></span><textarea name="customOptions" rows="4" maxlength="2048" placeholder="例如：-weighted_pred 1"></textarea><small>仅附加到视频编码器。不能覆盖输入、输出、映射、滤镜或编码器选择。</small></label>
                   </div>
                 </section>
 
@@ -786,9 +786,24 @@
     </div>
   </dialog>
 
+  <div class="parameter-help-popover" id="parameterHelpPopover" popover="auto" role="dialog" aria-labelledby="parameterHelpTitle" aria-describedby="parameterHelpDescription">
+    <header>
+      <div>
+        <span>参数说明</span>
+        <strong id="parameterHelpTitle"></strong>
+      </div>
+      <button class="icon-button" id="closeParameterHelpBtn" type="button" aria-label="关闭参数说明" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+    </header>
+    <p id="parameterHelpDescription"></p>
+    <div class="parameter-help-recommendation">
+      <i data-lucide="badge-check" aria-hidden="true"></i>
+      <div><span>直播推荐</span><strong id="parameterHelpRecommendation"></strong></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-appliance-console"></script>
+  <script src="/app.js?v=20261117-parameter-help"></script>
 </body>
 </html>

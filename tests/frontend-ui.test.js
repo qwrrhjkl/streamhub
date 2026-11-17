@@ -824,7 +824,7 @@ test('distribution uses a searchable status-filtered task card board with an on-
 });
 
 test('console uses a professional appliance shell with grouped operational navigation', () => {
-  for (const label of ['系统总览', '分发任务', '输入通道', '场景编排', '输出目标', '输出监测', '采集设备', '系统日志']) {
+  for (const label of ['系统总览', '分发任务', '本地直播间', '场景编排', '输出目标', '输出监测', '采集设备', '系统日志']) {
     assert.match(html, new RegExp(`<span>${label}</span>`));
   }
   for (const id of ['topbarPageTitle', 'topbarOutputCount', 'topbarCpu', 'topbarGpu', 'topbarUplink']) {
@@ -837,7 +837,30 @@ test('console uses a professional appliance shell with grouped operational navig
   assert.match(appFunctionSource('renderTopbarTelemetry'), /sendBytesPerSec/);
 });
 
-test('input channels and output targets use on-demand forms and control cards', () => {
+test('local room navigation and encoding parameter help are accessible and contextual', () => {
+  assert.match(html, /data-view="rooms"><i data-lucide="radio-receiver"[^>]*><\/i><span>本地直播间<\/span>/);
+  assert.match(html, /id="parameterHelpPopover"[^>]+popover="auto"/);
+  assert.match(html, /id="parameterHelpTitle"/);
+  assert.match(html, /id="parameterHelpDescription"/);
+  assert.match(html, /id="parameterHelpRecommendation"/);
+  for (const key of [
+    'videoEncoder', 'rateControl', 'bitrateKbps', 'maxBitrateKbps', 'bufferSizeKbps', 'crf',
+    'profile', 'level', 'preset', 'tune', 'multipass', 'keyframeSec', 'bFrames',
+    'referenceFrames', 'lookahead', 'adaptiveQuantization', 'aqStrength', 'sceneDetection',
+    'pixelFormat', 'colorRange', 'repeatHeaders', 'customOptions',
+  ]) {
+    assert.match(html, new RegExp(`data-parameter-help="${key}"`), `${key} should expose help`);
+    assert.match(app, new RegExp(`\\b${key}: \\{`), `${key} should define contextual help`);
+  }
+  assert.match(app, /const PARAMETER_HELP = Object\.freeze/);
+  assert.match(appFunctionSource('openParameterHelp'), /showPopover\(\)/);
+  assert.match(appFunctionSource('closeParameterHelp'), /hidePopover\(\)/);
+  assert.match(appFunctionSource('initializeParameterHelp'), /aria-expanded/);
+  assert.match(css, /\.console-app \.parameter-help-button\{/);
+  assert.match(css, /\.console-app \.parameter-help-popover\{/);
+});
+
+test('local rooms and output targets use on-demand forms and control cards', () => {
   assert.match(html, /id="roomForm" hidden/);
   assert.match(html, /id="destinationForm" hidden/);
   for (const id of ['newRoomBtn', 'closeRoomFormBtn', 'roomBoardSummary', 'newDestinationBtn', 'closeDestinationFormBtn', 'destinationBoardSummary']) {

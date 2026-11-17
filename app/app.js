@@ -5,13 +5,126 @@ const THEME_STORAGE_KEY = 'streamhub-console-theme';
 const VIEW_META = {
   dashboard: { title: '系统总览', kicker: 'CONTROL CENTER' },
   distribution: { title: '分发任务', kicker: 'OUTPUT ORCHESTRATION' },
-  rooms: { title: '输入通道', kicker: 'SIGNAL INGEST' },
+  rooms: { title: '本地直播间', kicker: 'LOCAL INGEST' },
   scenes: { title: '场景编排', kicker: 'SCENE COMPOSER' },
   destinations: { title: '输出目标', kicker: 'DESTINATION ROUTING' },
   monitor: { title: '输出监测', kicker: 'OUTPUT TELEMETRY' },
   devices: { title: '采集设备', kicker: 'CAPTURE HARDWARE' },
   logs: { title: '系统日志', kicker: 'SYSTEM EVENTS' },
 };
+
+const PARAMETER_HELP = Object.freeze({
+  videoEncoder: {
+    title: '视频编码器',
+    description: '决定由 CPU、NVIDIA GPU 或其他硬件完成压缩。copy 不重新编码，只适用于格式已经符合输出要求的网络流。',
+    recommendation: '采集卡和画面叠加优先使用 NVIDIA NVENC；纯 RTMP 转推且无需处理时使用自动选择。',
+  },
+  rateControl: {
+    title: '码率控制',
+    description: '决定编码器如何分配码率。CBR 稳定占用带宽；VBR 会随画面复杂度变化；CRF 以画质为目标，带宽不可预测。',
+    recommendation: '直播推流使用 CBR；本地录制或带宽宽裕时再考虑 VBR / CRF。',
+  },
+  bitrateKbps: {
+    title: '目标码率',
+    description: '视频平均每秒传输的数据量。码率越高通常越清晰，同时占用更多上行带宽。',
+    recommendation: '1080p50/60 建议 8,000–15,000 Kbps；1080p25/30 建议 6,000–10,000；720p 建议 3,500–6,000。',
+  },
+  maxBitrateKbps: {
+    title: '峰值码率',
+    description: 'VBR 或恒定质量模式允许达到的瞬时上限。CBR 模式通常与目标码率相同。',
+    recommendation: 'CBR：与目标码率一致；VBR：设置为目标码率的 1.2–1.5 倍。',
+  },
+  bufferSizeKbps: {
+    title: '码率缓冲区',
+    description: '控制编码器短时间内平滑码率波动的范围。数值过小容易影响画质，过大则可能增加延迟。',
+    recommendation: '低延迟直播一般设置为目标码率的 2 倍，例如 15,000 Kbps 对应 30,000 Kbits。',
+  },
+  crf: {
+    title: 'CRF 质量值',
+    description: '数值越小画质越高、文件或码率越大。该模式不保证固定带宽。',
+    recommendation: 'x264 通常使用 18–23；NVENC 恒定质量通常从 20–24 开始测试。',
+  },
+  profile: {
+    title: '编码档 Profile',
+    description: '定义 H.264 可使用的压缩特性。档位越高压缩效率越好，但老旧设备兼容性可能下降。',
+    recommendation: '现代直播平台使用 High；仅兼容非常老的播放器时使用 Main 或 Baseline。',
+  },
+  level: {
+    title: '编码 Level',
+    description: '限制分辨率、帧率和码率上限。设置过低会导致编码器拒绝当前组合。',
+    recommendation: '优先选择自动；需要固定规范时，1080p60 通常使用 4.2，1080p30 通常使用 4.1。',
+  },
+  preset: {
+    title: 'Preset',
+    description: '控制编码速度、GPU/CPU 占用和压缩效率。更慢的预设通常画质更好，但资源占用更高。',
+    recommendation: 'NVENC 从 p4 开始，资源宽裕可用 p5；x264 直播通常使用 veryfast。',
+  },
+  tune: {
+    title: 'Tune',
+    description: '针对低延迟、画质或特定内容调整编码器行为。低延迟模式会减少缓存和部分前向分析。',
+    recommendation: '实时导播使用 LL 低延迟；更重视画质且允许额外延迟时使用 HQ。',
+  },
+  multipass: {
+    title: '多次编码',
+    description: '让编码器额外分析画面后再分配码率，可提升复杂场景质量，但会增加 GPU 占用和延迟。',
+    recommendation: '低延迟直播使用单次编码；GPU 余量充足时可使用 1/4 分辨率二次编码。',
+  },
+  keyframeSec: {
+    title: 'GOP 关键帧间隔',
+    description: '两个关键帧之间的时间。间隔越短，平台切流和恢复越快，但压缩效率略低。',
+    recommendation: '绝大多数直播平台使用 2 秒；没有平台明确要求时不要超过 4 秒。',
+  },
+  bFrames: {
+    title: 'B 帧数',
+    description: 'B 帧可提高压缩效率，但需要参考前后画面，会增加少量编码和播放延迟。',
+    recommendation: '普通直播使用 2；超低延迟使用 0；画质优先可测试 3–4。',
+  },
+  referenceFrames: {
+    title: '参考帧数',
+    description: '编码器分析多少个历史画面来提高压缩效率。数值越高，显存和解码复杂度越高。',
+    recommendation: '直播使用 3；低延迟或兼容性优先时使用 1–2。',
+  },
+  lookahead: {
+    title: '前向考虑',
+    description: '编码器提前分析后续画面，动态调整 B 帧和码率分配，可改善复杂运动画面。',
+    recommendation: '低延迟直播关闭；体育或高运动内容在 GPU 余量充足时开启。',
+  },
+  adaptiveQuantization: {
+    title: '自适应量化',
+    description: '把更多码率分配给纹理、边缘和视觉上更重要的区域，通常能提升主观画质。',
+    recommendation: '一般保持开启；只有排查编码器兼容问题时才关闭。',
+  },
+  aqStrength: {
+    title: 'AQ 强度',
+    description: '控制自适应量化对画面区域的调整力度。过高可能让局部细节显得不均衡。',
+    recommendation: 'NVENC 从 8 开始；画面复杂时可在 6–10 范围内微调。',
+  },
+  sceneDetection: {
+    title: '场景检测',
+    description: '检测镜头切换并在合适位置插入关键帧，改善快速切换后的画质恢复。',
+    recommendation: '一般开启；需要严格固定 GOP 的特殊传输链路可关闭。',
+  },
+  pixelFormat: {
+    title: '输出像素格式',
+    description: '决定色度采样和位深。格式越高级，兼容性要求和带宽通常越高。',
+    recommendation: '通用直播使用 yuv420p；10-bit HDR 链路使用 p010le，并确认平台完整支持。',
+  },
+  colorRange: {
+    title: '色彩范围',
+    description: 'TV/Limited 使用广播视频范围，PC/Full 使用完整数字范围。两端不匹配会导致画面发灰或黑位压死。',
+    recommendation: '直播和广播链路使用 Limited / TV；明确为全范围电脑画面时才使用 Full / PC。',
+  },
+  repeatHeaders: {
+    title: '关键帧重发 SPS/PPS',
+    description: '在每个关键帧重新发送解码参数，便于播放器中途加入或断线后快速恢复。',
+    recommendation: 'RTMP、MPEG-TS 和长时间直播保持开启。',
+  },
+  customOptions: {
+    title: '编码器自定义参数',
+    description: '直接追加受限制的 FFmpeg 编码器选项。错误参数可能导致任务无法启动。',
+    recommendation: '通常留空；仅在明确查阅当前编码器文档并完成测试后填写。',
+  },
+});
 
 function currentTheme() {
   return $('#consoleApp')?.dataset.theme === 'night' ? 'night' : 'day';
@@ -57,6 +170,79 @@ function initializeTheme() {
     savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'day';
   } catch { /* use the requested daytime default */ }
   applyTheme(savedTheme);
+}
+
+let activeParameterHelpButton = null;
+
+function parameterHelpIsOpen() {
+  const popover = $('#parameterHelpPopover');
+  return Boolean(popover && popover.matches(':popover-open'));
+}
+
+function positionParameterHelp(button) {
+  const popover = $('#parameterHelpPopover');
+  if (!popover || !button || !parameterHelpIsOpen()) return;
+  const margin = 12;
+  const gap = 8;
+  const buttonRect = button.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const maxLeft = Math.max(margin, window.innerWidth - popoverRect.width - margin);
+  const left = Math.min(Math.max(margin, buttonRect.left), maxLeft);
+  const roomBelow = window.innerHeight - buttonRect.bottom - margin;
+  const top = roomBelow >= popoverRect.height + gap
+    ? buttonRect.bottom + gap
+    : Math.max(margin, buttonRect.top - popoverRect.height - gap);
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
+function closeParameterHelp({ restoreFocus = false } = {}) {
+  const popover = $('#parameterHelpPopover');
+  const button = activeParameterHelpButton;
+  if (popover && parameterHelpIsOpen()) popover.hidePopover();
+  if (button) button.setAttribute('aria-expanded', 'false');
+  activeParameterHelpButton = null;
+  if (restoreFocus && button) button.focus();
+}
+
+function openParameterHelp(button) {
+  const item = PARAMETER_HELP[button?.dataset.parameterHelp];
+  const popover = $('#parameterHelpPopover');
+  if (!item || !popover) return;
+
+  $('#parameterHelpTitle').textContent = item.title;
+  $('#parameterHelpDescription').textContent = item.description;
+  $('#parameterHelpRecommendation').textContent = item.recommendation;
+  if (activeParameterHelpButton && activeParameterHelpButton !== button) {
+    activeParameterHelpButton.setAttribute('aria-expanded', 'false');
+  }
+  activeParameterHelpButton = button;
+  button.setAttribute('aria-expanded', 'true');
+  button.setAttribute('aria-controls', 'parameterHelpPopover');
+  if (!parameterHelpIsOpen()) popover.showPopover();
+  requestAnimationFrame(() => positionParameterHelp(button));
+}
+
+function initializeParameterHelp() {
+  const popover = $('#parameterHelpPopover');
+  if (!popover) return;
+  $$('[data-parameter-help]').forEach(button => {
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'parameterHelpPopover');
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openParameterHelp(button);
+    });
+  });
+  $('#closeParameterHelpBtn')?.addEventListener('click', () => closeParameterHelp({ restoreFocus: true }));
+  popover.addEventListener('beforetoggle', event => {
+    if (event.newState !== 'closed') return;
+    activeParameterHelpButton?.setAttribute('aria-expanded', 'false');
+    activeParameterHelpButton = null;
+  });
+  window.addEventListener('resize', () => closeParameterHelp());
+  window.addEventListener('scroll', () => closeParameterHelp(), true);
 }
 
 let state = null;
@@ -1095,7 +1281,7 @@ function validatePipelineInput(values, currentState = state || {}) {
   const inputType = get('inputType');
   if (inputType === 'room') {
     const room = (currentState.rooms || []).find(item => item.id === get('roomId'));
-    return room && room.enabled !== false ? '' : '请选择有效且已启用的输入通道';
+    return room && room.enabled !== false ? '' : '请选择有效且已启用的本地直播间';
   }
   if (inputType === 'legacy') {
     const source = (currentState.sources || []).find(item => item.id === get('sourceId'));
@@ -1734,8 +1920,8 @@ function fillSettingsForm(form, settings = {}) {
 }
 
 function updateRoomEditUi() {
-  $('#roomFormTitle').textContent = editingRoomId ? '修改输入通道' : '创建输入通道';
-  $('#roomSubmitBtn').textContent = editingRoomId ? '保存修改' : '保存输入通道';
+  $('#roomFormTitle').textContent = editingRoomId ? '修改本地直播间' : '创建本地直播间';
+  $('#roomSubmitBtn').textContent = editingRoomId ? '保存修改' : '保存直播间';
   $('#cancelRoomEditBtn').hidden = !editingRoomId;
 }
 
@@ -2802,7 +2988,7 @@ function describePipelineInput(pipeline) {
   const input = pipeline.input || {};
   if (input.type === 'room') {
     const room = (state.rooms || []).find(item => item.id === input.roomId);
-    return room ? `输入通道：${room.name}` : '输入通道：未找到';
+    return room ? `本地直播间：${room.name}` : '本地直播间：未找到';
   }
   if (input.type === 'url') return `URL：${input.url || '-'}`;
   if (input.type === 'file') return `本地视频：${input.path || input.url || '-'}`;
@@ -2860,7 +3046,7 @@ function renderSummary() {
     actualBitrateStatus: monitor.totals.actualBitrateSampling ? 'sampling' : 'unavailable',
   });
   $('#summaryCards').innerHTML = [
-    metric('输入通道', (state.rooms || []).length),
+    metric('本地直播间', (state.rooms || []).length),
     metric('运行任务', monitor.totals.pipelines || 0),
     metric('输出路数', monitor.totals.outputs || 0),
     metric('实际输出总码率', totalBitrate),
@@ -3177,7 +3363,7 @@ function renderRooms() {
   const rooms = state.rooms || [];
   replaceReferenceOptions($('#pipelineRoom'), rooms, Boolean(editingPipelineId));
   const liveCount = rooms.filter(room => room.enabled !== false && room.status === 'live').length;
-  if ($('#roomBoardSummary')) $('#roomBoardSummary').textContent = `${rooms.length} 个通道 · ${liveCount} 路有信号`;
+  if ($('#roomBoardSummary')) $('#roomBoardSummary').textContent = `${rooms.length} 个直播间 · ${liveCount} 路有信号`;
   $('#roomCards').innerHTML = rooms.map(room => {
     const info = roomPublishInfo(room);
     const status = room.enabled === false ? 'disabled' : (room.status || 'idle');
@@ -3185,14 +3371,14 @@ function renderRooms() {
     return `<article class="entity-control-card input-channel-card ${escapeHtml(status)}">
       <div class="entity-card-visual">
         <span class="entity-card-status"><i aria-hidden="true"></i>${statusLabel}</span>
-        <div class="entity-card-symbol"><i data-lucide="radio-receiver" aria-hidden="true"></i><strong>RTMP INGEST</strong><small>固定接入通道</small></div>
+        <div class="entity-card-symbol"><i data-lucide="radio-receiver" aria-hidden="true"></i><strong>LOCAL ROOM</strong><small>固定 RTMP 接入</small></div>
         <span class="entity-card-technical">${escapeHtml(room.streamName)} · TCP 1935</span>
       </div>
       <div class="entity-card-body">
         <div class="entity-card-title">
         <div>
           <h3>${escapeHtml(room.name)}</h3>
-            <p>通道标识 <code>${escapeHtml(room.streamName)}</code></p>
+            <p>直播间标识 <code>${escapeHtml(room.streamName)}</code></p>
         </div>
       </div>
         <div class="entity-copy-list">
@@ -3202,15 +3388,15 @@ function renderRooms() {
         </div>
       </div>
       <footer class="entity-card-actions">
-        <span>${status === 'live' ? '上游设备已建立连接' : status === 'disabled' ? '通道停止接收信号' : '等待上游设备推流'}</span>
+        <span>${status === 'live' ? '上游设备已建立连接' : status === 'disabled' ? '直播间已停止接收信号' : '等待上游设备推流'}</span>
         <div>
-          <button class="icon-button" data-action="edit-room" data-id="${escapeHtml(room.id)}" title="修改输入通道" aria-label="修改 ${escapeHtml(room.name)}"><i data-lucide="pencil" aria-hidden="true"></i></button>
-          <button class="icon-button" data-action="toggle-room" data-id="${escapeHtml(room.id)}" data-enabled="${room.enabled === false}" title="${room.enabled === false ? '启用输入通道' : '停用输入通道'}" aria-label="${room.enabled === false ? '启用' : '停用'} ${escapeHtml(room.name)}"><i data-lucide="power" aria-hidden="true"></i></button>
-          <button class="danger icon-button" data-action="delete-item" data-collection="rooms" data-id="${escapeHtml(room.id)}" title="删除输入通道" aria-label="删除 ${escapeHtml(room.name)}"><i data-lucide="trash-2" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="edit-room" data-id="${escapeHtml(room.id)}" title="修改本地直播间" aria-label="修改 ${escapeHtml(room.name)}"><i data-lucide="pencil" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="toggle-room" data-id="${escapeHtml(room.id)}" data-enabled="${room.enabled === false}" title="${room.enabled === false ? '启用本地直播间' : '停用本地直播间'}" aria-label="${room.enabled === false ? '启用' : '停用'} ${escapeHtml(room.name)}"><i data-lucide="power" aria-hidden="true"></i></button>
+          <button class="danger icon-button" data-action="delete-item" data-collection="rooms" data-id="${escapeHtml(room.id)}" title="删除本地直播间" aria-label="删除 ${escapeHtml(room.name)}"><i data-lucide="trash-2" aria-hidden="true"></i></button>
         </div>
       </footer>
     </article>`;
-  }).join('') || '<div class="entity-empty"><i data-lucide="radio-receiver" aria-hidden="true"></i><h3>还没有输入通道</h3><p>创建通道后即可获得固定 RTMP 接入地址和密钥。</p><button class="primary" type="button" data-action="create-room"><i data-lucide="plus" aria-hidden="true"></i>新建输入通道</button></div>';
+  }).join('') || '<div class="entity-empty"><i data-lucide="radio-receiver" aria-hidden="true"></i><h3>还没有本地直播间</h3><p>创建直播间后即可获得固定 RTMP 接入地址和密钥。</p><button class="primary" type="button" data-action="create-room"><i data-lucide="plus" aria-hidden="true"></i>新建直播间</button></div>';
   bindRendererActions($('#roomCards'));
   refreshIcons();
 }
@@ -3241,7 +3427,7 @@ function pipelineStatusIsActive(status) {
 
 function pipelineInputTypeMeta(pipeline = {}) {
   const input = pipeline.input || {};
-  if (input.type === 'room') return { label: '输入通道', icon: 'radio-tower' };
+  if (input.type === 'room') return { label: '本地直播间', icon: 'radio-receiver' };
   if (input.type === 'url') return { label: '网络流', icon: 'link' };
   if (input.type === 'file' || input.type === 'playlist') return { label: '视频素材', icon: 'file-video-2' };
   if (input.type === 'capture') {
@@ -5166,7 +5352,7 @@ async function deleteItem(collection, id) {
 async function toggleRoom(id, enabled) {
   const room = (state.rooms || []).find(item => item.id === id);
   const name = room ? `“${room.name}”` : '';
-  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}输入通道${name}？`)) return;
+  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}本地直播间${name}？`)) return;
   await api(`/api/rooms/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   await loadState();
 }
@@ -5199,7 +5385,7 @@ function editDestination(id) {
 
 function editRoom(id) {
   const room = (state.rooms || []).find(item => item.id === id);
-  if (!room) return alert('未找到输入通道');
+  if (!room) return alert('未找到本地直播间');
   editingRoomId = id;
   const form = $('#roomForm');
   setControlValue(form, 'name', room.name || '');
@@ -5430,7 +5616,7 @@ $('#roomForm').addEventListener('submit', async event => {
   resetRoomForm();
   setEntityFormVisible('#roomForm', false);
   await loadState();
-  showToast(wasEditing ? '输入通道已修改' : '输入通道已保存');
+  showToast(wasEditing ? '本地直播间已修改' : '本地直播间已保存');
 });
 
 $('#pipelineForm').addEventListener('submit', async event => {
@@ -5867,6 +6053,7 @@ renderNoSignalImage();
 handleMonitorRangePresetChange({ load: false });
 handleMonitorDetailRangePresetChange();
 initializeTheme();
+initializeParameterHelp();
 $('#themeToggle').addEventListener('click', () => {
   applyTheme(currentTheme() === 'night' ? 'day' : 'night', true);
 });
