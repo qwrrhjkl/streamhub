@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-parameter-help">
+  <link rel="stylesheet" href="/styles.css?v=20261117-four-column-board">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -52,16 +52,17 @@
     </div>
     <nav class="nav" id="nav" aria-label="主导航">
       <span class="nav-section-label">控制中心</span>
-      <button data-view="dashboard" class="active"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>系统总览</span></button>
-      <button data-view="distribution"><i data-lucide="radio-tower" aria-hidden="true"></i><span>分发任务</span></button>
+      <button data-view="dashboard" class="active"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>总览</span></button>
+      <button data-view="distribution"><i data-lucide="radio-tower" aria-hidden="true"></i><span>推流分发</span></button>
       <span class="nav-section-label">信号编排</span>
       <button data-view="rooms"><i data-lucide="radio-receiver" aria-hidden="true"></i><span>本地直播间</span></button>
       <button data-view="scenes"><i data-lucide="layers-3" aria-hidden="true"></i><span>场景编排</span></button>
-      <button data-view="destinations"><i data-lucide="send" aria-hidden="true"></i><span>输出目标</span></button>
+      <button data-view="destinations"><i data-lucide="send" aria-hidden="true"></i><span>推流目标</span></button>
       <span class="nav-section-label">运行维护</span>
       <button data-view="monitor"><i data-lucide="activity" aria-hidden="true"></i><span>输出监测</span></button>
       <button data-view="devices"><i data-lucide="cpu" aria-hidden="true"></i><span>采集设备</span></button>
-      <button data-view="logs"><i data-lucide="file-clock" aria-hidden="true"></i><span>系统日志</span></button>
+      <button data-view="logs"><i data-lucide="file-clock" aria-hidden="true"></i><span>日志</span></button>
+      <button data-view="settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
     </nav>
     <div class="sidebar-machine-status">
       <span><i aria-hidden="true"></i>设备在线</span>
@@ -73,7 +74,7 @@
     <header class="console-topbar">
       <div class="console-topbar-context">
         <span id="topbarPageKicker">CONTROL CENTER</span>
-        <strong id="topbarPageTitle">系统总览</strong>
+        <strong id="topbarPageTitle">总览</strong>
       </div>
       <div class="console-topbar-actions">
         <div class="topbar-telemetry" aria-label="设备实时状态">
@@ -600,6 +601,18 @@
         </div>
       </section>
 
+      <section class="view operations-workspace" id="view-settings">
+        <div class="page-head">
+          <div>
+            <h1>设置</h1>
+          </div>
+        </div>
+        <div class="settings-empty" role="status">
+          <i data-lucide="settings" aria-hidden="true"></i>
+          <strong>设置项待添加</strong>
+        </div>
+      </section>
+
     </section>
   </main>
 
@@ -804,6 +817,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-parameter-help"></script>
+  <script src="/app.js?v=20261117-four-column-board"></script>
 </body>
 </html>

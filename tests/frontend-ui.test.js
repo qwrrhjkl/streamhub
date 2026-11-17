@@ -829,6 +829,7 @@ test('distribution uses a searchable status-filtered task card board with an on-
   assert.match(html, /data-pipeline-filter="running"/);
   assert.match(html, /class="pipeline-card-grid"/);
   assert.match(css, /\.pipeline-card-grid\{[^}]*grid-template-columns:repeat\(auto-fill,minmax\(min\(100%,360px\),1fr\)\)/);
+  assert.match(css, /@media\(min-width:1660px\)\{[\s\S]*?\.pipeline-card-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
   assert.match(css, /\.pipeline-task-card\{[^}]*border-radius:10px/);
   assert.match(css, /@media\(max-width:640px\)[\s\S]*\.pipeline-card-footer\{[^}]*flex-direction:column/);
 
@@ -845,9 +846,17 @@ test('distribution uses a searchable status-filtered task card board with an on-
 });
 
 test('console uses a professional appliance shell with grouped operational navigation', () => {
-  for (const label of ['系统总览', '分发任务', '本地直播间', '场景编排', '输出目标', '输出监测', '采集设备', '系统日志']) {
+  const labels = ['总览', '推流分发', '本地直播间', '场景编排', '推流目标', '输出监测', '采集设备', '日志', '设置'];
+  const nav = html.match(/<nav class="nav" id="nav"[\s\S]*?<\/nav>/)?.[0] || '';
+  let previousIndex = -1;
+  for (const label of labels) {
     assert.match(html, new RegExp(`<span>${label}</span>`));
+    const index = nav.indexOf(`<span>${label}</span>`);
+    assert.ok(index > previousIndex, `${label} should follow the requested navigation order`);
+    previousIndex = index;
   }
+  assert.match(html, /id="view-settings"/);
+  assert.match(app, /settings: \{ title: '设置', kicker: 'SYSTEM CONFIGURATION' \}/);
   for (const id of ['topbarPageTitle', 'topbarOutputCount', 'topbarCpu', 'topbarGpu', 'topbarUplink']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }

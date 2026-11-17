@@ -3,14 +3,15 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const THEME_STORAGE_KEY = 'streamhub-console-theme';
 const VIEW_META = {
-  dashboard: { title: '系统总览', kicker: 'CONTROL CENTER' },
-  distribution: { title: '分发任务', kicker: 'OUTPUT ORCHESTRATION' },
+  dashboard: { title: '总览', kicker: 'CONTROL CENTER' },
+  distribution: { title: '推流分发', kicker: 'OUTPUT ORCHESTRATION' },
   rooms: { title: '本地直播间', kicker: 'LOCAL INGEST' },
   scenes: { title: '场景编排', kicker: 'SCENE COMPOSER' },
-  destinations: { title: '输出目标', kicker: 'DESTINATION ROUTING' },
+  destinations: { title: '推流目标', kicker: 'DESTINATION ROUTING' },
   monitor: { title: '输出监测', kicker: 'OUTPUT TELEMETRY' },
   devices: { title: '采集设备', kicker: 'CAPTURE HARDWARE' },
-  logs: { title: '系统日志', kicker: 'SYSTEM EVENTS' },
+  logs: { title: '日志', kicker: 'SYSTEM EVENTS' },
+  settings: { title: '设置', kicker: 'SYSTEM CONFIGURATION' },
 };
 
 const PARAMETER_HELP = Object.freeze({
