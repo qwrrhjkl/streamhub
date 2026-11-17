@@ -1719,12 +1719,12 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .shell{transition:margin-left .2s cubic-bezier(.22,1,.36,1)}
 .console-app .sidebar-toggle{
   align-items:center;
-  background:var(--ui-surface);
-  border-color:var(--ui-line);
-  color:var(--ui-muted);
+  background:#101d2e;
+  border-color:rgba(151,183,211,.22);
+  color:#a9bac9;
   display:grid;
   height:36px;
-  left:228px;
+  left:198px;
   min-height:36px;
   padding:0;
   place-items:center;
@@ -1734,16 +1734,17 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   width:36px;
   z-index:14;
 }
-.console-app .sidebar-toggle:hover{background:var(--ui-signal-soft);color:var(--ui-signal-dark)}
+.console-app .sidebar-toggle:hover{background:rgba(72,185,255,.12);border-color:rgba(72,185,255,.3);color:#f2f8ff}
 .console-app .sidebar-toggle svg{grid-area:1/1;height:17px;width:17px}
 .console-app .sidebar-toggle-expand{display:none}
 .console-app.sidebar-collapsed .sidebar{pointer-events:none;transform:translateX(-100%)}
 .console-app.sidebar-collapsed .shell{margin-left:0}
-.console-app.sidebar-collapsed .sidebar-toggle{left:12px}
+.console-app.sidebar-collapsed .sidebar-toggle{background:var(--ui-surface);border-color:var(--ui-line);color:var(--ui-muted);left:12px}
+.console-app.sidebar-collapsed .sidebar-toggle:hover{background:var(--ui-signal-soft);border-color:color-mix(in srgb,var(--ui-signal) 28%,var(--ui-line));color:var(--ui-signal-dark)}
 .console-app.sidebar-collapsed .console-topbar{padding-left:64px}
 .console-app.sidebar-collapsed .sidebar-toggle-collapse{display:none}
 .console-app.sidebar-collapsed .sidebar-toggle-expand{display:block}
-.console-app[data-theme="night"] .sidebar-toggle{background:#0c1d2d;border-color:rgba(130,183,224,.2);color:#9db5c9}
+.console-app[data-theme="night"] .sidebar-toggle,.console-app[data-theme="night"].sidebar-collapsed .sidebar-toggle{background:#0c1d2d;border-color:rgba(130,183,224,.2);color:#9db5c9}
 .console-app[data-theme="night"] .sidebar-toggle:hover{background:rgba(72,185,255,.16);color:#f2f8ff}
 .console-app .brand{
   border-bottom:1px solid rgba(151,183,211,.14);
