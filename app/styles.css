@@ -1283,7 +1283,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .pipeline-card-grid{
   display:grid;
   gap:16px;
-  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));
 }
 .console-app .pipeline-task-card{
   background:var(--ui-surface);
@@ -1682,7 +1682,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .entity-board-head p{color:var(--ui-muted);font-size:11px;margin:4px 0 0}
 .console-app .entity-board-head>span{align-items:center;color:var(--ui-muted);display:flex;font-size:10px;gap:6px}
 .console-app .entity-board-head>span svg{height:13px;width:13px}
-.console-app .entity-card-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr))}
+.console-app .entity-card-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,350px),1fr))}
 .console-app .entity-control-card{
   background:var(--ui-surface);
   border:1px solid var(--ui-line);

@@ -777,7 +777,7 @@ test('distribution uses a searchable status-filtered task card board with an on-
   assert.match(html, /data-pipeline-filter="all"[^>]+aria-pressed="true"/);
   assert.match(html, /data-pipeline-filter="running"/);
   assert.match(html, /class="pipeline-card-grid"/);
-  assert.match(css, /\.pipeline-card-grid\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,360px\),1fr\)\)/);
+  assert.match(css, /\.pipeline-card-grid\{[^}]*grid-template-columns:repeat\(auto-fill,minmax\(min\(100%,360px\),1fr\)\)/);
   assert.match(css, /\.pipeline-task-card\{[^}]*border-radius:10px/);
   assert.match(css, /@media\(max-width:640px\)[\s\S]*\.pipeline-card-footer\{[^}]*flex-direction:column/);
 
