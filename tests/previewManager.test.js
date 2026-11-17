@@ -242,6 +242,22 @@ test('audio preview reports present and absent input tracks without making audio
   assert.equal(withoutAudio.spawned[0].args.includes('0:a:0?'), true);
 });
 
+test('relay preview ignores transient H264 attach errors while direct input still reports them', () => {
+  const mirror = {
+    inputUrl: 'udp://127.0.0.1:50123?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576',
+    outputUrl: 'udp://127.0.0.1:50123?pkt_size=1316',
+  };
+  const relay = createPreviewHarness({ previewSource: { kind: 'relay', previewMirror: mirror } });
+  const relayPreview = relay.previews.start({ input: { type: 'url', url: 'rtmp://origin.example.com/live/pgm' } });
+  relay.child.stderr.emit('data', Buffer.from('[h264 @ 0x123] decode_slice_header error\n'));
+  assert.equal(relay.previews.describe(relayPreview.id).state, 'connecting');
+
+  const direct = createPreviewHarness();
+  const directPreview = direct.previews.start({ input: { type: 'url', url: 'rtmp://origin.example.com/live/pgm' } });
+  direct.child.stderr.emit('data', Buffer.from('[h264 @ 0x123] decode_slice_header error\n'));
+  assert.equal(direct.previews.describe(directPreview.id).state, 'failed');
+});
+
 test('classifies a missing input signal separately from a failed process', () => {
   const { previews, child } = createPreviewHarness();
   const preview = previews.start({ input: { type: 'capture', capture: { backend: 'decklink', device: 'DeckLink Duo 2 (1)' } } });

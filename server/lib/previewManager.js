@@ -36,8 +36,9 @@ function normalizePreviewOptions(request = {}) {
   };
 }
 
-function diagnosticFor(line) {
+function diagnosticFor(line, { readsLocalRelay = false } = {}) {
   const text = String(line || '');
+  if (readsLocalRelay && /decode_slice_header error|non-existing PPS|no frame!/i.test(text)) return null;
   if (/no input signal|no signal detected|\bno signal\b|cannot autodetect input stream|could not find input format/i.test(text)) {
     return { state: 'no-signal', message: '暂无输入源' };
   }
@@ -206,7 +207,7 @@ class PreviewManager {
       return;
     }
 
-    const diagnostic = diagnosticFor(line);
+    const diagnostic = diagnosticFor(line, { readsLocalRelay: session.readsLocalRelay });
     if (!diagnostic) return;
     if (session.state === 'no-signal' && diagnostic.state === 'failed') return;
     session.state = diagnostic.state;
@@ -304,6 +305,7 @@ class PreviewManager {
       previewBitrateKbps: 0,
       videoCodec: '',
       audioCodec: '',
+      readsLocalRelay: args.some(arg => /^udp:\/\/127\.0\.0\.1:\d+/.test(String(arg))),
       outputDescriptionStarted: false,
       clients: new Set(),
       idleTimer: null,
