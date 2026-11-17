@@ -766,6 +766,45 @@ test('room and pipeline cards expose edit actions and cancel edit buttons', () =
   assert.match(app, /data-action="edit-pipeline"/);
 });
 
+test('distribution uses a searchable status-filtered task card board with an on-demand form', () => {
+  for (const id of [
+    'pipelineTaskSummary', 'pipelineStatusFilters', 'pipelineSearchInput', 'newPipelineBtn',
+    'pipelineResultCount', 'pipelineCards', 'closePipelineFormBtn',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `${id} should exist`);
+  }
+  assert.match(html, /id="pipelineForm" hidden/);
+  assert.match(html, /data-pipeline-filter="all"[^>]+aria-pressed="true"/);
+  assert.match(html, /data-pipeline-filter="running"/);
+  assert.match(html, /class="pipeline-card-grid"/);
+  assert.match(css, /\.pipeline-card-grid\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,360px\),1fr\)\)/);
+  assert.match(css, /\.pipeline-task-card\{[^}]*border-radius:10px/);
+  assert.match(css, /@media\(max-width:640px\)[\s\S]*\.pipeline-card-footer\{[^}]*flex-direction:column/);
+
+  const renderer = appFunctionSource('renderPipelineCards');
+  assert.match(renderer, /pipelineMatchesCardFilters/);
+  assert.match(renderer, /pipeline-card-preview/);
+  assert.match(renderer, /pipeline-card-live-metrics/);
+  assert.match(renderer, /data-action="preview-pipeline"/);
+  assert.match(renderer, /data-action="duplicate-pipeline"/);
+  assert.match(renderer, /data-action="open-studio-switcher"/);
+  assert.doesNotMatch(renderer, /class="signal-path"/);
+  assert.match(appFunctionSource('editPipeline'), /setPipelineFormVisible\(true\)/);
+  assert.match(appFunctionSource('closePipelineForm'), /setPipelineFormVisible\(false\)/);
+});
+
+test('task card status buckets and compact bitrate labels are deterministic', () => {
+  const context = appFunctions(['pipelineStatusBucket', 'pipelineStatusIsActive', 'compactBitrate']);
+  assert.equal(context.pipelineStatusBucket('running'), 'running');
+  assert.equal(context.pipelineStatusBucket('fallback'), 'error');
+  assert.equal(context.pipelineStatusBucket('stopped'), 'stopped');
+  assert.equal(context.pipelineStatusIsActive('draining'), true);
+  assert.equal(context.pipelineStatusIsActive('error'), false);
+  assert.equal(context.compactBitrate(9820), '9.82 Mbps');
+  assert.equal(context.compactBitrate(800), '800 Kbps');
+  assert.equal(context.compactBitrate(null), '--');
+});
+
 test('capture form exposes V4L2 and DeckLink backends', () => {
   const pipelineForm = formMarkup('pipelineForm');
   assert.match(pipelineForm, /name="captureBackend"/);
@@ -872,7 +911,8 @@ test('renderer actions use escaped data attributes and delegated listeners', () 
   assert.doesNotMatch(app, /onclick\s*=/);
   for (const action of [
     'copy-text', 'remove-selected-destination', 'edit-room', 'toggle-room', 'delete-item',
-    'edit-pipeline', 'start-pipeline', 'stop-pipeline', 'edit-destination', 'toggle-destination',
+    'edit-pipeline', 'start-pipeline', 'stop-pipeline', 'preview-pipeline', 'duplicate-pipeline',
+    'create-pipeline', 'edit-destination', 'toggle-destination',
   ]) {
     assert.match(app, new RegExp(`data-action="${action}"`));
   }
@@ -1287,7 +1327,7 @@ test('distribution input controls provide an accessible preview dialog', () => {
 });
 
 test('input preview reuses the live form payload and releases its stream on close', () => {
-  assert.match(app, /let inputPreviewState = \{ id: '', pollTimer: null, closing: false \}/);
+  assert.match(app, /let inputPreviewState = \{ id: '', pipelineId: '', pollTimer: null, closing: false \}/);
   assert.match(app, /function buildPreviewRequest\(form\)\s*\{\s*return buildPipelineInput\(form\);\s*\}/);
   assert.match(app, /async function openInputPreview\(/);
   assert.match(app, /await api\('\/api\/previews', \{[\s\S]*method: 'POST'/);

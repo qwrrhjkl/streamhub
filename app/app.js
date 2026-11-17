@@ -58,6 +58,7 @@ let editingDestinationId = null;
 let selectedDestinationIds = [];
 let pipelineFormGeneration = 0;
 let pipelineSubmitPending = false;
+let pipelineCardFilters = { status: 'all', query: '' };
 let pendingLiveDelayStopPipelineId = null;
 let pipelineWatermarks = [];
 let pipelineNoSignalImage = null;
@@ -105,7 +106,7 @@ let monitorDetailState = {
   lastRange: null,
   loading: false,
 };
-let inputPreviewState = { id: '', pollTimer: null, closing: false };
+let inputPreviewState = { id: '', pipelineId: '', pollTimer: null, closing: false };
 let overlayLayoutState = {
   kind: '',
   selectedIndex: 0,
@@ -168,6 +169,7 @@ function setUserMenuOpen(open) {
 function detachInputPreview() {
   const id = inputPreviewState.id;
   inputPreviewState.id = '';
+  inputPreviewState.pipelineId = '';
   inputPreviewState.closing = false;
   clearInputPreviewPoll();
   const image = $('#inputPreviewImage');
@@ -1591,6 +1593,29 @@ function resetPipelineForm() {
   updatePipelineEditUi();
 }
 
+function setPipelineFormVisible(visible, { focus = false } = {}) {
+  const form = $('#pipelineForm');
+  if (!form) return;
+  form.hidden = !visible;
+  if (!visible) return;
+  refreshIcons();
+  requestAnimationFrame(() => {
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (focus) form.elements.name && form.elements.name.focus();
+  });
+}
+
+function openNewPipelineForm() {
+  resetPipelineForm();
+  show('distribution');
+  setPipelineFormVisible(true, { focus: true });
+}
+
+function closePipelineForm() {
+  resetPipelineForm();
+  setPipelineFormVisible(false);
+}
+
 function updateDestinationEditUi() {
   const editing = Boolean(editingDestinationId);
   $('#destinationFormTitle').textContent = editing ? '修改平台' : '新增平台';
@@ -2834,6 +2859,9 @@ function handleRendererAction(button) {
   if (action === 'edit-pipeline') return editPipeline(id);
   if (action === 'start-pipeline') return startPipeline(id);
   if (action === 'stop-pipeline') return stopPipeline(id);
+  if (action === 'preview-pipeline') return openPipelinePreview(id);
+  if (action === 'duplicate-pipeline') return duplicatePipeline(id);
+  if (action === 'create-pipeline') return openNewPipelineForm();
   if (action === 'refresh-program') return refreshPipelineProgram(id);
   if (action === 'edit-destination') return editDestination(id);
   if (action === 'toggle-destination') return toggleDestination(id, enabled === 'true');
@@ -2934,10 +2962,105 @@ function renderPipelineFormOptions() {
   syncEncodingControls();
 }
 
+function pipelineStatusBucket(status) {
+  if (['error', 'fallback'].includes(status)) return 'error';
+  if (['running', 'starting', 'draining'].includes(status)) return 'running';
+  return 'stopped';
+}
+
+function pipelineStatusIsActive(status) {
+  return ['running', 'starting', 'fallback', 'draining'].includes(status);
+}
+
+function pipelineInputTypeMeta(pipeline = {}) {
+  const input = pipeline.input || {};
+  if (input.type === 'room') return { label: '本地直播间', icon: 'radio-tower' };
+  if (input.type === 'url') return { label: '网络流', icon: 'link' };
+  if (input.type === 'file' || input.type === 'playlist') return { label: '视频素材', icon: 'file-video-2' };
+  if (input.type === 'capture') {
+    return input.capture && input.capture.backend === 'decklink'
+      ? { label: 'DeckLink 采集', icon: 'video' }
+      : { label: '采集卡', icon: 'webcam' };
+  }
+  if (input.type === 'scene') return { label: '画面场景', icon: 'layers-3' };
+  return { label: '输入源', icon: 'radio' };
+}
+
+function compactBitrate(kbps) {
+  const value = Number(kbps);
+  if (!Number.isFinite(value) || value <= 0) return '--';
+  if (value < 1000) return `${Math.round(value)} Kbps`;
+  const mbps = value / 1000;
+  const precision = mbps >= 10 ? 1 : 2;
+  return `${Number(mbps.toFixed(precision))} Mbps`;
+}
+
+function pipelineMonitorSummary(pipeline = {}) {
+  const outputs = (state.monitor && state.monitor.outputs || []).filter(output => (
+    output.pipelineId === pipeline.id && !['disabled', 'stopped'].includes(output.status)
+  ));
+  const bitrateSamples = outputs
+    .filter(output => output.actualBitrateAvailable)
+    .map(output => Number(output.bitrateKbps))
+    .filter(value => Number.isFinite(value) && value > 0);
+  const fpsSamples = outputs
+    .map(output => Number(output.fps))
+    .filter(value => Number.isFinite(value) && value > 0);
+  const totalBitrate = bitrateSamples.reduce((sum, value) => sum + value, 0);
+  const lowestFps = fpsSamples.length ? Math.min(...fpsSamples) : 0;
+  return {
+    bitrate: bitrateSamples.length ? compactBitrate(totalBitrate) : '--',
+    fps: lowestFps > 0 ? `${formatPreviewFps(lowestFps)} fps` : '--',
+    activeOutputs: outputs.length,
+  };
+}
+
+function pipelineMatchesCardFilters(pipeline, status, destinations) {
+  if (pipelineCardFilters.status !== 'all' && pipelineStatusBucket(status) !== pipelineCardFilters.status) return false;
+  const query = pipelineCardFilters.query.trim().toLocaleLowerCase('zh-CN');
+  if (!query) return true;
+  const haystack = [
+    pipeline.name,
+    describePipelineInput(pipeline),
+    pipeline.mode,
+    ...destinations.flatMap(destination => [destination.name, destination.protocol]),
+  ].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN');
+  return haystack.includes(query);
+}
+
+function renderPipelineTaskSummary(pipelines = []) {
+  const counts = pipelines.reduce((result, pipeline) => {
+    const status = pipelineRuntimeStatus(pipeline);
+    result.total += 1;
+    if (pipelineStatusIsActive(status)) result.active += 1;
+    if (pipelineStatusBucket(status) === 'error') result.errors += 1;
+    return result;
+  }, { total: 0, active: 0, errors: 0 });
+  const summary = $('#pipelineTaskSummary');
+  if (!summary) return;
+  summary.innerHTML = `
+    <span><i data-lucide="layout-grid" aria-hidden="true"></i><strong>${counts.total}</strong> 个任务</span>
+    <span class="is-running"><i data-lucide="radio" aria-hidden="true"></i><strong>${counts.active}</strong> 路运行</span>
+    <span class="${counts.errors ? 'is-error' : ''}"><i data-lucide="triangle-alert" aria-hidden="true"></i><strong>${counts.errors}</strong> 个异常</span>`;
+}
+
 function renderPipelineCards() {
   const switchableIds = new Set(runningStudioPipelines(state.pipelines || [], state.monitor || {}).map(item => item.id));
-  const markup = (state.pipelines || []).map(p => {
+  const pipelines = state.pipelines || [];
+  renderPipelineTaskSummary(pipelines);
+  const visiblePipelines = pipelines.filter(pipeline => {
+    const destinations = (pipeline.destinationIds || []).map(id => findDestination(id)).filter(Boolean);
+    return pipelineMatchesCardFilters(pipeline, pipelineRuntimeStatus(pipeline), destinations);
+  });
+  const resultCount = $('#pipelineResultCount');
+  if (resultCount) {
+    resultCount.textContent = visiblePipelines.length === pipelines.length
+      ? `共 ${pipelines.length} 个任务`
+      : `显示 ${visiblePipelines.length} 个，共 ${pipelines.length} 个任务`;
+  }
+  const markup = visiblePipelines.map(p => {
     const destinations = (p.destinationIds || []).map(id => (state.destinations || []).find(d => d.id === id)).filter(Boolean);
+    const enabledDestinations = pipelineEnabledDestinations(p);
     const status = pipelineRuntimeStatus(p);
     const statusMessage = pipelineRuntimeMessage(p);
     const liveSettings = p.settings && p.settings.live || {};
@@ -2949,48 +3072,77 @@ function renderPipelineCards() {
     const switchable = switchableIds.has(p.id);
     const resolution = p.settings?.video?.outputResolution || '1920x1080';
     const fps = p.settings?.video?.fps || '59.94';
-    const bitrate = p.settings?.live?.bitrateKbps || 8000;
-    const outputCount = destinations.length;
+    const outputCount = enabledDestinations.length;
     const processing = visualProcessingActive(p.settings || {}) ? '画面叠加' : '原样转推';
     const relayMode = (p.mode || 'shared-relay') === 'shared-relay' ? '共享转推' : '独立输出';
-    return `<article class="item-card pipeline-card">
-      <div class="panel-head">
+    const inputMeta = pipelineInputTypeMeta(p);
+    const monitorSummary = pipelineMonitorSummary(p);
+    const active = pipelineStatusIsActive(status);
+    const destinationTags = destinations.length
+      ? destinations.slice(0, 3).map(destination => `<span class="pipeline-destination-tag ${destination.enabled === false ? 'is-disabled' : ''}">${escapeHtml(destination.name)}<small>${escapeHtml((destination.protocol || 'rtmp').toUpperCase())}</small></span>`).join('')
+      : '<span class="pipeline-destination-empty">未配置输出平台</span>';
+    const destinationOverflow = destinations.length > 3 ? `<span class="pipeline-destination-more">+${destinations.length - 3}</span>` : '';
+    const primaryAction = active
+      ? `<button class="pipeline-primary-control is-stop" data-action="stop-pipeline" data-id="${escapeHtml(p.id)}" type="button"><i data-lucide="square" aria-hidden="true"></i><span>停止</span></button>`
+      : `<button class="pipeline-primary-control is-start" data-action="start-pipeline" data-id="${escapeHtml(p.id)}" type="button"><i data-lucide="play" aria-hidden="true"></i><span>启动</span></button>`;
+    return `<article class="pipeline-task-card ${escapeHtml(status)}" data-pipeline-id="${escapeHtml(p.id)}">
+      <div class="pipeline-card-preview">
+        <div class="pipeline-card-preview-top">
+          <span class="pipeline-card-state"><i aria-hidden="true"></i>${escapeHtml(pipelineStatusLabel(status))}</span>
+          <span class="pipeline-card-output-count"><i data-lucide="radio-tower" aria-hidden="true"></i>${outputCount} 路输出</span>
+        </div>
+        <button class="pipeline-card-preview-trigger" data-action="preview-pipeline" data-id="${escapeHtml(p.id)}" type="button" aria-label="预览 ${escapeHtml(p.name)} 的输入源">
+          <i data-lucide="${inputMeta.icon}" aria-hidden="true"></i>
+          <strong>预览输入源</strong>
+          <small>${escapeHtml(inputMeta.label)}</small>
+        </button>
+        <div class="pipeline-card-preview-meta">
+          <span><i data-lucide="video" aria-hidden="true"></i>${escapeHtml(resolution)} / ${escapeHtml(fps)} fps</span>
+          <span>${escapeHtml(processing)}</span>
+        </div>
+      </div>
+      <div class="pipeline-card-body">
+        <div class="pipeline-card-title-row">
         <div>
           <h3>${escapeHtml(p.name)}</h3>
-          <p>输入源：${escapeHtml(describePipelineInput(p))}</p>
+            <p title="${escapeHtml(describePipelineInput(p))}">${escapeHtml(describePipelineInput(p))}</p>
         </div>
-        <span class="badge ${escapeHtml(status)}">${escapeHtml(pipelineStatusLabel(status))}</span>
+          <button class="program-refresh-button icon-button" data-action="refresh-program" data-id="${escapeHtml(p.id)}" type="button" title="刷新当前播出内容" aria-label="刷新 ${escapeHtml(p.name)} 的当前播出内容"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
       </div>
-      ${statusMessage ? `<p class="warning">${escapeHtml(statusMessage)}</p>` : ''}
-      <div class="signal-path" aria-label="信号处理路径">
-        <div class="signal-step"><span>01</span><small>输入</small><strong>${escapeHtml(describePipelineInput(p))}</strong></div>
-        <div class="signal-step"><span>02</span><small>画面处理</small><strong>${escapeHtml(processing)}</strong></div>
-        <div class="signal-step"><span>03</span><small>转推模式</small><strong>${escapeHtml(relayMode)}</strong></div>
-        <div class="signal-step"><span>04</span><small>平台输出</small><strong>${escapeHtml(outputCount ? `${outputCount} 路 · ${destinations.map(d => d.name).join('、')}` : '暂无')}</strong></div>
+        ${statusMessage ? `<p class="pipeline-card-alert">${escapeHtml(statusMessage)}</p>` : ''}
+        <div class="pipeline-card-tags" aria-label="任务配置摘要">
+          <span>${escapeHtml(relayMode)}</span>
+          <span>${escapeHtml(delayText || '无直播延时')}</span>
+          <span>${escapeHtml(processing)}</span>
       </div>
-      <div class="pipeline-metrics">
-        <div><span>配置分辨率</span><strong>${escapeHtml(resolution)}</strong></div>
-        <div><span>配置帧率</span><strong>${escapeHtml(fps)} fps</strong></div>
-        <div><span>配置码率</span><strong>${escapeHtml(bitrate)} Kbps</strong></div>
-        <div><span>直播延时</span><strong>${escapeHtml(delayText || '未启用')}</strong></div>
-      </div>
-      <div class="pipeline-program-summary">
-        <div>
-          <span>当前 Program</span>
+        <div class="pipeline-card-destinations" aria-label="输出平台">${destinationTags}${destinationOverflow}</div>
+        <div class="pipeline-card-program">
+          <span>当前播出</span>
           <strong>${escapeHtml(programDescriptor.title)}</strong>
-          <small>${escapeHtml(programDescriptor.source)}</small>
+          <small title="${escapeHtml(programDescriptor.source)}">${escapeHtml(programDescriptor.source)}</small>
+      </div>
+      </div>
+      <footer class="pipeline-card-footer">
+        <div class="pipeline-card-live-metrics" aria-label="实时输出指标">
+          <span><strong>${escapeHtml(monitorSummary.bitrate)}</strong><small>实时总码率</small></span>
+          <span><strong>${escapeHtml(monitorSummary.fps)}</strong><small>最低输出帧率</small></span>
         </div>
-        <button class="program-refresh-button icon-button" data-action="refresh-program" data-id="${escapeHtml(p.id)}" type="button" title="刷新当前 Program" aria-label="刷新当前 Program"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
-      </div>
-      <div class="item-actions">
-        <button data-action="edit-pipeline" data-id="${escapeHtml(p.id)}">修改</button>
-        <button class="primary" data-action="start-pipeline" data-id="${escapeHtml(p.id)}">开始</button>
-        <button data-action="stop-pipeline" data-id="${escapeHtml(p.id)}">停止</button>
-        <button class="studio-switcher-open" data-action="open-studio-switcher" data-id="${escapeHtml(p.id)}" ${switchable ? '' : 'disabled'} title="${switchable ? '打开 Preview / Program 切换台' : '请先以共享转推模式启动任务'}">打开切换台</button>
-        <button class="danger" data-action="delete-item" data-collection="pipelines" data-id="${escapeHtml(p.id)}">删除</button>
-      </div>
+        <div class="pipeline-card-actions">
+          ${primaryAction}
+          <button class="icon-button" data-action="edit-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="修改任务" aria-label="修改 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="pencil" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="duplicate-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="复制任务" aria-label="复制 ${escapeHtml(p.name)}"><i data-lucide="copy" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="open-studio-switcher" data-id="${escapeHtml(p.id)}" type="button" ${switchable ? '' : 'disabled'} title="${switchable ? '打开画面切换台' : '共享转推任务运行后可打开切换台'}" aria-label="打开 ${escapeHtml(p.name)} 的画面切换台"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></button>
+          <button class="danger icon-button" data-action="delete-item" data-collection="pipelines" data-id="${escapeHtml(p.id)}" type="button" title="删除任务" aria-label="删除 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="trash-2" aria-hidden="true"></i></button>
+        </div>
+      </footer>
     </article>`;
-  }).join('') || '<p>还没有分发任务。</p>';
+  }).join('') || `<div class="pipeline-card-empty">
+      <i data-lucide="${pipelines.length ? 'search-x' : 'layout-grid'}" aria-hidden="true"></i>
+      <h3>${pipelines.length ? '没有符合条件的任务' : '还没有分发任务'}</h3>
+      <p>${pipelines.length ? '调整状态筛选或搜索关键词后重试。' : '创建第一个任务后，可以在卡片中直接启动、停止、预览和管理。'}</p>
+      ${pipelines.length ? '' : '<button class="primary" type="button" data-action="create-pipeline"><i data-lucide="plus" aria-hidden="true"></i>新建任务</button>'}
+      </div>
+    `;
   replaceContainerHtmlPreservingFocus($('#pipelineCards'), markup);
   bindRendererActions($('#pipelineCards'));
   refreshIcons();
@@ -4117,6 +4269,7 @@ async function releaseInputPreview() {
   clearInputPreviewPoll();
   const id = inputPreviewState.id;
   inputPreviewState.id = '';
+  inputPreviewState.pipelineId = '';
   const image = $('#inputPreviewImage');
   const video = $('#inputPreviewVideo');
   video.pause();
@@ -4135,6 +4288,7 @@ async function releaseInputPreview() {
 
 async function openInputPreview() {
   if (inputPreviewState.closing) return;
+  inputPreviewState.pipelineId = '';
   const form = $('#pipelineForm');
   const validationError = validatePipelineInput(new FormData(form));
   if (validationError) return showPipelineValidationError(validationError);
@@ -4455,6 +4609,52 @@ async function stopPipeline(id) {
   return requestPipelineStop(id, 'discard');
 }
 
+async function openPipelinePreview(id) {
+  if (inputPreviewState.closing) return;
+  const pipeline = (state.pipelines || []).find(item => item.id === id);
+  if (!pipeline) return alert('未找到分发任务');
+  await releaseInputPreview();
+  inputPreviewState.pipelineId = id;
+  const dialog = $('#inputPreviewDialog');
+  renderInputPreview({ state: 'connecting', sourceLabel: describePipelineInput(pipeline), latencyMs: 1000 });
+  if (!dialog.open) dialog.showModal();
+  try {
+    const preview = await api('/api/previews?format=mp4', {
+      method: 'POST',
+      body: JSON.stringify({ ...createPipelineInputPreviewRequest(pipeline), format: 'mp4' }),
+    });
+    inputPreviewState.id = preview.id;
+    renderInputPreview(preview);
+    const video = $('#inputPreviewVideo');
+    video.hidden = false;
+    video.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
+    video.load();
+    video.play().catch(() => {});
+    scheduleInputPreviewPoll();
+  } catch (error) {
+    renderInputPreview({ state: 'failed', message: error.message, sourceLabel: describePipelineInput(pipeline) });
+  }
+}
+
+async function duplicatePipeline(id) {
+  const pipeline = (state.pipelines || []).find(item => item.id === id);
+  if (!pipeline) return alert('未找到分发任务');
+  const payload = {
+    name: `${pipeline.name || '分发任务'} 副本`,
+    ...(pipeline.input ? { input: JSON.parse(JSON.stringify(pipeline.input)) } : { sourceId: pipeline.sourceId }),
+    destinationIds: Array.isArray(pipeline.destinationIds) ? [...pipeline.destinationIds] : [],
+    mode: pipeline.mode || 'shared-relay',
+    settings: JSON.parse(JSON.stringify(pipeline.settings || {})),
+  };
+  try {
+    await api('/api/pipelines', { method: 'POST', body: JSON.stringify(payload) });
+    await loadState();
+    showToast(`已创建“${payload.name}”`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function refreshPipelineProgram(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
   if (!pipeline) return;
@@ -4599,7 +4799,7 @@ function editPipeline(id) {
   syncEncodingControls(form);
   updatePipelineEditUi();
   show('distribution');
-  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setPipelineFormVisible(true);
 }
 
 window.startPipeline = startPipeline;
@@ -4766,7 +4966,10 @@ $('#pipelineForm').addEventListener('submit', async event => {
       body: JSON.stringify(payload),
     });
     const ownsSavedForm = pipelineFormOwns(submitGeneration, submitEditingPipelineId);
-    if (pipelineFormOwns(submitGeneration, submitEditingPipelineId)) resetPipelineForm();
+    if (pipelineFormOwns(submitGeneration, submitEditingPipelineId)) {
+      resetPipelineForm();
+      setPipelineFormVisible(false);
+    }
     await loadState();
     if (ownsSavedForm) showToast(wasEditing ? '分发任务已修改' : '分发任务已保存');
   } catch (error) {
@@ -4895,8 +5098,10 @@ $('#refreshCaptureDevicesBtn').addEventListener('click', async () => {
 $('#previewInputBtn').addEventListener('click', openInputPreview);
 $('#closeInputPreviewBtn').addEventListener('click', () => $('#inputPreviewDialog').close());
 $('#retryInputPreviewBtn').addEventListener('click', async () => {
+  const pipelineId = inputPreviewState.pipelineId;
   await releaseInputPreview();
-  openInputPreview();
+  if (pipelineId) openPipelinePreview(pipelineId);
+  else openInputPreview();
 });
 $('#inputPreviewDialog').addEventListener('close', () => {
   releaseInputPreview();
@@ -4973,7 +5178,22 @@ $('#uploadSlideshowBtn').addEventListener('click', () => uploadOverlayFiles({
 }));
 $('#uploadNoSignalImageBtn').addEventListener('click', uploadNoSignalImage);
 $('#cancelRoomEditBtn').addEventListener('click', resetRoomForm);
-$('#cancelPipelineEditBtn').addEventListener('click', resetPipelineForm);
+$('#newPipelineBtn').addEventListener('click', openNewPipelineForm);
+$('#closePipelineFormBtn').addEventListener('click', closePipelineForm);
+$('#cancelPipelineEditBtn').addEventListener('click', closePipelineForm);
+$$('[data-pipeline-filter]').forEach(button => button.addEventListener('click', () => {
+  pipelineCardFilters.status = button.dataset.pipelineFilter || 'all';
+  $$('[data-pipeline-filter]').forEach(item => {
+    const active = item.dataset.pipelineFilter === pipelineCardFilters.status;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+  renderPipelineCards();
+}));
+$('#pipelineSearchInput').addEventListener('input', event => {
+  pipelineCardFilters.query = event.currentTarget.value || '';
+  renderPipelineCards();
+});
 $('#cancelDestinationEditBtn').addEventListener('click', resetDestinationForm);
 $('#applyMonitorRangeBtn').addEventListener('click', applyMonitorRange);
 $('#monitorRangePreset').addEventListener('change', handleMonitorRangePresetChange);

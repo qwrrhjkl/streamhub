@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261004-capture-discovery">
+  <link rel="stylesheet" href="/styles.css?v=20261117-task-cards">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -202,16 +202,40 @@
       </section>
 
       <section class="view" id="view-distribution">
-        <div class="page-head">
+        <div class="distribution-page-head">
           <div>
-            <h1>分发推流</h1>
-            <p>选择本地直播间、URL 流、本地视频文件或采集卡信号作为输入，然后把同一路内容分发到多个推流平台。</p>
+            <h1>分发任务</h1>
+            <p>集中查看每路任务的输入、输出、运行指标和当前播出内容。</p>
+          </div>
+          <div class="distribution-summary" id="pipelineTaskSummary" aria-live="polite"></div>
+        </div>
+
+        <div class="distribution-toolbar">
+          <div class="pipeline-filter-group" id="pipelineStatusFilters" role="group" aria-label="按任务状态筛选">
+            <button type="button" class="active" data-pipeline-filter="all" aria-pressed="true">全部</button>
+            <button type="button" data-pipeline-filter="running" aria-pressed="false">运行中</button>
+            <button type="button" data-pipeline-filter="stopped" aria-pressed="false">已停止</button>
+            <button type="button" data-pipeline-filter="error" aria-pressed="false">异常</button>
+          </div>
+          <div class="distribution-toolbar-actions">
+            <label class="pipeline-search" for="pipelineSearchInput">
+              <i data-lucide="search" aria-hidden="true"></i>
+              <span class="sr-only">搜索任务</span>
+              <input id="pipelineSearchInput" type="search" autocomplete="off" placeholder="搜索任务、输入源或平台">
+            </label>
+            <button class="primary" id="newPipelineBtn" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>新建任务</span></button>
           </div>
         </div>
 
-        <div class="workspace-grid wide distribution-workspace">
-          <form class="panel form" id="pipelineForm">
-            <h2>创建分发任务</h2>
+        <div class="distribution-workspace">
+          <form class="panel form pipeline-form-panel" id="pipelineForm" hidden>
+            <div class="pipeline-form-heading">
+              <div>
+                <h2>创建分发任务</h2>
+                <p>配置输入、输出平台和编码参数。保存后返回任务卡片视图。</p>
+              </div>
+              <button class="icon-button" id="closePipelineFormBtn" type="button" title="关闭任务编辑" aria-label="关闭任务编辑"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
             <label>直播名称<input name="name" placeholder="例如：PGM 分发任务"></label>
             <label>输入源类型
               <select name="inputType" id="inputType">
@@ -384,12 +408,16 @@
             </div>
           </form>
 
-          <div class="stack">
-            <div class="panel">
-              <h2>分发任务</h2>
-              <div id="pipelineCards" class="cards"></div>
+          <section class="distribution-task-board" aria-labelledby="pipelineTaskBoardTitle">
+            <div class="distribution-task-board-head">
+              <div>
+                <h2 id="pipelineTaskBoardTitle">任务编排</h2>
+                <p id="pipelineResultCount">正在读取任务...</p>
+              </div>
+              <span class="distribution-board-hint"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>卡片内直接控制</span>
             </div>
-          </div>
+            <div id="pipelineCards" class="pipeline-card-grid"></div>
+          </section>
         </div>
       </section>
 
@@ -775,6 +803,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261004-capture-discovery"></script>
+  <script src="/app.js?v=20261117-task-cards"></script>
 </body>
 </html>
