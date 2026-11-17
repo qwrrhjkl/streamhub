@@ -18,6 +18,7 @@ const {
   buildDirectPreviewArgs,
   buildRelayPreviewArgs,
   buildTeeOutputArgs,
+  parseCustomEncoderOptions,
   resolvePipelineSource,
 } = require('../server/lib/ffmpegBuilder');
 
@@ -418,7 +419,7 @@ test('buildOutputArgs applies OBS-style audio and video settings when encoding',
   assert.equal(args[args.indexOf('-b:v') + 1], '5000k');
   assert.equal(args[args.indexOf('-minrate') + 1], '5000k');
   assert.equal(args[args.indexOf('-maxrate') + 1], '5000k');
-  assert.equal(args[args.indexOf('-x264-params') + 1], 'nal-hrd=cbr:force-cfr=1');
+  assert.match(args[args.indexOf('-x264-params') + 1], /^nal-hrd=cbr:force-cfr=1:/);
   assert.equal(args.includes('-g'), true);
   assert.equal(args[args.indexOf('-g') + 1], '100');
   assert.equal(args.includes('-ar'), true);
@@ -491,7 +492,7 @@ test('buildSharedRelayArgs uses low-latency NVENC video and copied audio for aut
   assert.equal(args[args.indexOf('-preset') + 1], 'p4');
   assert.equal(args[args.indexOf('-tune') + 1], 'll');
   assert.equal(args[args.indexOf('-rc') + 1], 'cbr');
-  assert.equal(args[args.indexOf('-spatial_aq') + 1], '1');
+  assert.equal(args[args.indexOf('-spatial-aq') + 1], '1');
   assert.equal(args[args.indexOf('-zerolatency') + 1], '1');
 });
 
@@ -572,18 +573,57 @@ test('shared relay adds one deterministic loopback preview mirror', () => {
   );
 });
 
-test('preview builders create a 960px 15fps video-only MPJPEG stream', () => {
+test('preview builders keep full preview at source frame rate and use low-load card monitoring', () => {
   const direct = buildDirectPreviewArgs({ type: 'pull', url: 'rtmp://origin.example.com/live/pgm' });
   const relay = buildRelayPreviewArgs(createPreviewMirrorChannel('pipe-pgm'));
+  const monitor = buildDirectPreviewArgs(
+    { type: 'pull', url: 'rtmp://origin.example.com/live/pgm' },
+    { monitor: true },
+  );
 
   for (const args of [direct, relay]) {
     assert.deepEqual(mappedStreams(args), ['0:v:0?']);
     assert.equal(args.includes('-an'), true);
-    assert.equal(args[args.indexOf('-vf') + 1], 'fps=15,scale=trunc(min(960\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
+    assert.equal(args[args.indexOf('-vf') + 1], 'scale=trunc(min(1280\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
     assert.deepEqual(args.slice(args.indexOf('-f'), args.indexOf('-f') + 2), ['-f', 'mpjpeg']);
     assert.equal(args[args.indexOf('-boundary_tag') + 1], 'streamhub-preview');
     assert.equal(args.at(-1), 'pipe:1');
   }
+  assert.equal(monitor[monitor.indexOf('-vf') + 1], 'fps=2,scale=trunc(min(480\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
+  assert.equal(monitor[monitor.indexOf('-q:v') + 1], '8');
+  assert.equal(monitor.includes('-an'), true);
+});
+
+test('professional rate-control modes never pass a quality number as NVENC rc', () => {
+  const source = { type: 'pull', url: 'rtmp://origin.example.com/live/pgm' };
+  const destination = { id: 'dest-1', server: 'rtmp://push.example.com/live', streamKey: 'room' };
+  const nvenc = buildOutputArgs(source, destination, {
+    live: { videoEncoder: 'h264_nvenc', rateControl: 'crf', crf: 22, maxBitrateKbps: 12000, bufferSizeKbps: 24000 },
+    video: { outputResolution: '1920x1080', fps: '59.94' },
+  });
+  assert.equal(nvenc[nvenc.indexOf('-rc') + 1], 'vbr');
+  assert.notEqual(nvenc[nvenc.indexOf('-rc') + 1], '22');
+  assert.equal(nvenc[nvenc.indexOf('-cq') + 1], '22');
+  assert.throws(
+    () => buildOutputArgs(source, destination, { live: { videoEncoder: 'h264_nvenc', rateControl: 'abr' } }),
+    /NVENC.*ABR/,
+  );
+
+  for (const mode of ['cbr', 'vbr', 'abr', 'crf']) {
+    const args = buildOutputArgs(source, destination, {
+      live: { videoEncoder: 'libx264', rateControl: mode, bitrateKbps: 6000, maxBitrateKbps: 8000, bufferSizeKbps: 12000, crf: 21 },
+      video: { outputResolution: '1280x720', fps: '30' },
+    });
+    assert.equal(args.includes('-c:v'), true);
+    assert.equal(args[args.indexOf('-c:v') + 1], 'libx264');
+  }
+});
+
+test('custom encoder options are tokenized without a shell and cannot replace stream structure', () => {
+  assert.deepEqual(parseCustomEncoderOptions('-weighted_pred 1 -coder="cabac"'), ['-weighted_pred', '1', '-coder=cabac']);
+  assert.throws(() => parseCustomEncoderOptions('-i rtmp://example.invalid/live'), /不能覆盖结构性选项 -i/);
+  assert.throws(() => parseCustomEncoderOptions('-vf scale=1280:720'), /不能覆盖结构性选项 -vf/);
+  assert.throws(() => parseCustomEncoderOptions('weighted_pred 1'), /缺少选项名称/);
 });
 
 test('buildSharedRelayArgs reads one source and fans out MPEG-TS to every local channel', () => {

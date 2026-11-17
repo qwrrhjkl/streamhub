@@ -256,179 +256,141 @@
             <div class="pipeline-form-heading">
               <div>
                 <h2>创建分发任务</h2>
-                <p>配置输入、输出平台和编码参数。保存后返回任务卡片视图。</p>
+                <p>按信号链路逐项配置，未保存的内容会在模块切换时保留。</p>
               </div>
               <button class="icon-button" id="closePipelineFormBtn" type="button" title="关闭任务编辑" aria-label="关闭任务编辑"><i data-lucide="x" aria-hidden="true"></i></button>
             </div>
-            <label>直播名称<input name="name" placeholder="例如：PGM 分发任务"></label>
-            <label>输入源类型
-              <select name="inputType" id="inputType">
-                <option value="room">输入通道 / RTMP</option>
-                <option value="url">RTMP/SRT/HLS URL 流</option>
-                <option value="file">视频素材</option>
-                <option value="capture">采集卡信号</option>
-                <option value="scene">自定义场景</option>
-              </select>
-            </label>
+            <div class="pipeline-editor-layout">
+              <nav class="pipeline-editor-nav" aria-label="任务设置模块">
+                <button type="button" class="active" data-pipeline-section="basic" aria-current="step"><i data-lucide="file-pen-line" aria-hidden="true"></i><span><strong>基础信息</strong><small>名称与运行方式</small></span></button>
+                <button type="button" data-pipeline-section="input"><i data-lucide="video-input" aria-hidden="true"></i><span><strong>输入信号</strong><small>通道、URL 或采集卡</small></span></button>
+                <button type="button" data-pipeline-section="output"><i data-lucide="radio-tower" aria-hidden="true"></i><span><strong>输出目标</strong><small>平台和分发端点</small></span></button>
+                <button type="button" data-pipeline-section="video"><i data-lucide="badge-hd" aria-hidden="true"></i><span><strong>视频编码</strong><small>分辨率、码率与 GOP</small></span></button>
+                <button type="button" data-pipeline-section="audio"><i data-lucide="audio-lines" aria-hidden="true"></i><span><strong>音频编码</strong><small>编码、采样率与声道</small></span></button>
+                <button type="button" data-pipeline-section="processing"><i data-lucide="layers-3" aria-hidden="true"></i><span><strong>画面处理</strong><small>无信号、水印与幻灯片</small></span></button>
+                <button type="button" data-pipeline-section="advanced"><i data-lucide="sliders-horizontal" aria-hidden="true"></i><span><strong>高级设置</strong><small>硬件特性与自定义参数</small></span></button>
+              </nav>
+              <div class="pipeline-editor-main">
+                <p id="pipelineValidationSummary" class="pipeline-validation-summary" role="alert" hidden></p>
+                <section class="pipeline-editor-section active" data-pipeline-panel="basic">
+                  <header><h3>基础信息</h3><p>用于识别任务并确定内部转推架构。</p></header>
+                  <div class="compact-grid">
+                    <label class="full">任务名称<input name="name" placeholder="例如：PGM 分发任务"></label>
+                    <label>运行模式<select name="mode"><option value="shared-relay">共享转推（推荐）</option><option value="direct">直连推送</option></select></label>
+                  </div>
+                  <div class="settings-box live-delay-box">
+                    <h4>直播延时</h4>
+                    <label class="check-line live-delay-toggle"><input name="delayEnabled" type="checkbox"> 启用内存延时</label>
+                    <div class="live-delay-fields">
+                      <label>延时时间（秒）<input name="delaySeconds" type="number" value="20" min="1" max="300" step="1" disabled aria-describedby="liveDelayMemoryEstimate"></label>
+                      <p id="liveDelayMemoryEstimate" class="form-help" role="status" aria-live="polite">启用后将使用内存缓冲编码后的直播内容。</p>
+                    </div>
+                  </div>
+                </section>
 
-            <div class="input-mode" data-input-mode="room">
-              <label>选择输入通道<select name="roomId" id="pipelineRoom"></select></label>
-            </div>
-            <div class="input-mode" data-input-mode="url" hidden>
-              <label>URL 输入<input name="url" placeholder="rtmp://...、srt://... 或 https://..."></label>
-            </div>
-            <div class="input-mode" data-input-mode="file" hidden>
-              <label>选择视频素材<select name="mediaId" id="pipelineMedia"></select></label>
-              <label class="check-line"><input name="fileLoop" type="checkbox" checked> 循环播放</label>
-            </div>
-            <div class="input-mode" data-input-mode="capture" hidden>
-              <label>采集接口
-                <select name="captureBackend" id="captureBackend">
-                  <option value="v4l2">V4L2 / ALSA</option>
-                  <option value="decklink">Blackmagic DeckLink</option>
-                </select>
-              </label>
-              <div class="compact-grid capture-backend-panel" data-capture-backend="v4l2">
-                <label>视频设备
-                  <select name="videoDevice" id="videoDevice" aria-describedby="v4l2Status">
-                    <option value="">正在发现视频设备…</option>
-                  </select>
-                </label>
-                <label>音频设备
-                  <select name="audioDevice" id="audioDevice" aria-describedby="v4l2Status">
-                    <option value="disabled">不使用音频</option>
-                  </select>
-                </label>
-                <label>采集分辨率<select name="captureResolution"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
-                <label>采集帧率<select name="captureFps"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
-                <div class="capture-device-actions full">
-                  <button id="refreshCaptureDevicesBtn" type="button">
-                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
-                    <span>刷新设备</span>
-                  </button>
-                </div>
-                <p id="v4l2Status" class="field-status full" role="status" aria-live="polite">进入采集卡模式后自动发现设备。</p>
-              </div>
-              <div class="compact-grid capture-backend-panel" data-capture-backend="decklink" hidden>
-                <label class="full">DeckLink 设备
-                  <input name="decklinkDevice" list="decklinkDeviceOptions" placeholder="可选择自动发现结果，或手工输入设备名" aria-describedby="decklinkStatus">
-                </label>
-                <datalist id="decklinkDeviceOptions"></datalist>
-                <label>输入格式
-                  <input name="decklinkFormatCode" value="auto" list="decklinkFormatOptions" placeholder="auto" aria-describedby="decklinkStatus">
-                </label>
-                <datalist id="decklinkFormatOptions"></datalist>
-                <label>像素格式
-                  <select name="decklinkRawFormat">
-                    <option value="uyvy422">8-bit YUV 4:2:2 (uyvy422)</option>
-                    <option value="yuv422p10">10-bit YUV 4:2:2 (yuv422p10)</option>
-                    <option value="argb">ARGB</option>
-                    <option value="bgra">BGRA</option>
-                    <option value="rgb10">10-bit RGB</option>
-                    <option value="auto">自动</option>
-                  </select>
-                </label>
-                <label>嵌入式音频声道
-                  <select name="decklinkAudioChannels"><option value="2">2</option><option value="8">8</option><option value="16">16</option></select>
-                </label>
-                <p id="decklinkStatus" class="field-status full" role="status" aria-live="polite"></p>
-              </div>
-            </div>
-            <div class="input-mode" data-input-mode="scene" hidden>
-              <label>选择画面场景<select name="sceneId" id="pipelineScene"></select></label>
-            </div>
+                <section class="pipeline-editor-section" data-pipeline-panel="input" hidden>
+                  <header><h3>输入信号</h3><p>选择上游信号，并在保存前确认画面可用。</p></header>
+                  <label>输入源类型<select name="inputType" id="inputType"><option value="room">输入通道 / RTMP</option><option value="url">RTMP/SRT/HLS URL 流</option><option value="file">视频素材</option><option value="capture">采集卡信号</option><option value="scene">自定义场景</option></select></label>
+                  <div class="input-mode" data-input-mode="room"><label>选择输入通道<select name="roomId" id="pipelineRoom"></select></label></div>
+                  <div class="input-mode" data-input-mode="url" hidden><label>URL 输入<input name="url" placeholder="rtmp://...、srt://... 或 https://..."></label></div>
+                  <div class="input-mode" data-input-mode="file" hidden><label>选择视频素材<select name="mediaId" id="pipelineMedia"></select></label><label class="check-line"><input name="fileLoop" type="checkbox" checked> 循环播放</label></div>
+                  <div class="input-mode" data-input-mode="capture" hidden>
+                    <label>采集接口<select name="captureBackend" id="captureBackend"><option value="v4l2">V4L2 / ALSA</option><option value="decklink">Blackmagic DeckLink</option></select></label>
+                    <div class="compact-grid capture-backend-panel" data-capture-backend="v4l2">
+                      <label>视频设备<select name="videoDevice" id="videoDevice" aria-describedby="v4l2Status"><option value="">正在发现视频设备…</option></select></label>
+                      <label>音频设备<select name="audioDevice" id="audioDevice" aria-describedby="v4l2Status"><option value="disabled">不使用音频</option></select></label>
+                      <label>采集分辨率<select name="captureResolution"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
+                      <label>采集帧率<select name="captureFps"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
+                      <div class="capture-device-actions full"><button id="refreshCaptureDevicesBtn" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>刷新设备</span></button></div>
+                      <p id="v4l2Status" class="field-status full" role="status" aria-live="polite">进入采集卡模式后自动发现设备。</p>
+                    </div>
+                    <div class="compact-grid capture-backend-panel" data-capture-backend="decklink" hidden>
+                      <label class="full">DeckLink 设备<input name="decklinkDevice" list="decklinkDeviceOptions" placeholder="可选择自动发现结果，或手工输入设备名" aria-describedby="decklinkStatus"></label>
+                      <datalist id="decklinkDeviceOptions"></datalist>
+                      <label>输入格式<input name="decklinkFormatCode" value="auto" list="decklinkFormatOptions" placeholder="auto" aria-describedby="decklinkStatus"></label>
+                      <datalist id="decklinkFormatOptions"></datalist>
+                      <label>输入像素格式<select name="decklinkRawFormat"><option value="uyvy422">8-bit YUV 4:2:2 (uyvy422)</option><option value="yuv422p10">10-bit YUV 4:2:2 (yuv422p10)</option><option value="argb">ARGB</option><option value="bgra">BGRA</option><option value="rgb10">10-bit RGB</option><option value="auto">自动</option></select></label>
+                      <label>嵌入式音频声道<select name="decklinkAudioChannels"><option value="2">2</option><option value="8">8</option><option value="16">16</option></select></label>
+                      <p id="decklinkStatus" class="field-status full" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="input-mode" data-input-mode="scene" hidden><label>选择画面场景<select name="sceneId" id="pipelineScene"></select></label></div>
+                  <div class="input-preview-action"><button id="previewInputBtn" type="button"><i data-lucide="monitor-play" aria-hidden="true"></i>预览输入源</button></div>
+                </section>
 
-            <div class="input-preview-action">
-              <button id="previewInputBtn" type="button">预览输入源</button>
-            </div>
+                <section class="pipeline-editor-section" data-pipeline-panel="output" hidden>
+                  <header><h3>输出目标</h3><p>一个任务可以同时推送到多个平台或录制端点。</p></header>
+                  <div class="destination-picker-box">
+                    <label>选择输出目标<select id="destinationPicker"></select></label>
+                    <button type="button" id="addDestinationBtn">添加目标</button>
+                    <div class="selected-destination-panel"><span>已选输出目标</span><div id="selectedDestinationList" class="selected-destinations"></div></div>
+                    <p class="form-help">仅启用状态的端点会参与实际分发。</p>
+                  </div>
+                </section>
 
-            <div class="destination-picker-box">
-              <label>选择输出目标<select id="destinationPicker"></select></label>
-              <button type="button" id="addDestinationBtn">添加目标</button>
-              <div class="selected-destination-panel">
-                <span>已选输出目标</span>
-                <div id="selectedDestinationList" class="selected-destinations"></div>
-              </div>
-              <p class="form-help">从下拉框选择输出目标并添加；同一任务可配置多个目标端点。</p>
-            </div>
-            <label>运行模式<select name="mode"><option value="shared-relay">共享转推</option><option value="direct">直连推送</option></select></label>
+                <section class="pipeline-editor-section" data-pipeline-panel="video" hidden>
+                  <header><h3>视频编码</h3><p>按编码器能力显示可用参数，避免无效组合进入 FFmpeg。</p></header>
+                  <div class="compact-grid">
+                    <label>视频编码器<select name="videoEncoder" aria-describedby="encodingModeStatus"><option value="auto" selected>自动选择</option><option value="copy">copy（不转码）</option><option value="libx264">x264 软件编码</option><option value="h264_nvenc">NVIDIA NVENC</option><option value="h264_qsv">Intel Quick Sync</option><option value="h264_amf">AMD AMF</option></select></label>
+                    <label>码率控制<select name="rateControl" aria-describedby="encodingModeStatus"><option value="cbr">CBR 固定码率</option><option value="vbr">VBR 可变码率</option><option value="abr">ABR 平均码率</option><option value="crf">CRF / 恒定质量</option></select></label>
+                    <p id="encodingModeStatus" class="field-status full" role="status" aria-live="polite" tabindex="-1"></p>
+                    <label>输出分辨率<select name="outputResolution" aria-describedby="encodingModeStatus"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
+                    <label>输出帧率<select name="fps" aria-describedby="encodingModeStatus"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
+                    <label data-rate-field="bitrate">目标码率 Kbps<input name="bitrateKbps" type="number" value="8000" min="100" max="200000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="maxBitrate">峰值码率 Kbps<input name="maxBitrateKbps" type="number" value="8000" min="100" max="400000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="buffer">缓冲区 Kbits<input name="bufferSizeKbps" type="number" value="16000" min="100" max="800000" aria-describedby="encodingModeStatus"></label>
+                    <label data-rate-field="crf" hidden>质量值<input name="crf" type="number" value="23" min="0" max="51" step="1" aria-describedby="encodingModeStatus"></label>
+                    <label>编码档 Profile<select name="profile" aria-describedby="encodingModeStatus"><option value="baseline">Baseline</option><option value="main">Main</option><option value="high" selected>High</option></select></label>
+                    <label>Level<select name="level"><option value="auto">自动</option><option value="3.1">3.1</option><option value="4.0">4.0</option><option value="4.1">4.1</option><option value="4.2">4.2</option><option value="5.0">5.0</option><option value="5.1">5.1</option><option value="5.2">5.2</option><option value="6.0">6.0</option><option value="6.1">6.1</option><option value="6.2">6.2</option></select></label>
+                    <label>Preset<select name="preset" aria-describedby="encodingModeStatus"></select></label>
+                    <label>Tune<select name="tune"></select></label>
+                    <label data-encoder-field="multipass">多次编码<select name="multipass"><option value="disabled">单次编码</option><option value="qres">二次编码（1/4 分辨率）</option><option value="fullres">二次编码（全分辨率）</option></select></label>
+                    <label>GOP 关键帧间隔（秒）<input name="keyframeSec" type="number" value="2" min="0.5" max="10" step="0.5" aria-describedby="encodingModeStatus"></label>
+                    <label>B 帧数<input name="bFrames" type="number" value="2" min="0" max="4" step="1"></label>
+                    <label>参考帧数<input name="referenceFrames" type="number" value="3" min="1" max="16" step="1"></label>
+                  </div>
+                </section>
 
-            <div class="settings-box">
-              <h3>直播设置</h3>
-              <input type="hidden" name="preset" value="veryfast" aria-describedby="encodingModeStatus">
-              <input type="hidden" name="profile" value="high" aria-describedby="encodingModeStatus">
-              <div class="compact-grid">
-                <label>输出分辨率<select name="outputResolution" aria-describedby="encodingModeStatus"><option value="1920x1080">1920x1080</option><option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></label>
-                <label>输出帧率<select name="fps" aria-describedby="encodingModeStatus"><option value="60">60</option><option value="59.94" selected>59.94</option><option value="50">50</option><option value="30">30</option><option value="25">25</option></select></label>
-                <label>视频编码<select name="videoEncoder" aria-describedby="encodingModeStatus"><option value="auto" selected>自动</option><option value="copy">copy（不转码）</option><option value="h264_nvenc">h264_nvenc</option><option value="libx264">libx264（CPU 测试）</option></select></label>
-                <p id="encodingModeStatus" class="field-status full" role="status" aria-live="polite" tabindex="-1"></p>
-                <label>视频码率 Kbps<input name="bitrateKbps" type="number" value="8000" min="300" aria-describedby="encodingModeStatus"></label>
-                <label>关键帧间隔（秒）<select name="keyframeSec" aria-describedby="encodingModeStatus"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
-                <label>音频编码<select name="audioEncoder"><option value="aac">aac</option><option value="copy">copy（不转码）</option></select></label>
-                <label>采样率<select name="sampleRate"><option value="48000">48000</option><option value="44100">44100</option></select></label>
-                <label>声道<select name="channels"><option value="stereo">stereo</option><option value="mono">mono</option></select></label>
-                <label>音频码率 Kbps<input name="audioBitrateKbps" type="number" value="320" min="64"></label>
-              </div>
-            </div>
+                <section class="pipeline-editor-section" data-pipeline-panel="audio" hidden>
+                  <header><h3>音频编码</h3><p>直播输出默认使用 AAC 48 kHz 立体声。</p></header>
+                  <div class="compact-grid">
+                    <label>音频编码<select name="audioEncoder"><option value="aac">AAC</option><option value="copy">copy（不转码）</option></select></label>
+                    <label>采样率<select name="sampleRate"><option value="48000">48000 Hz</option><option value="44100">44100 Hz</option></select></label>
+                    <label>声道<select name="channels"><option value="stereo">立体声</option><option value="mono">单声道</option></select></label>
+                    <label>音频码率 Kbps<input name="audioBitrateKbps" type="number" value="320" min="64" max="512"></label>
+                  </div>
+                </section>
 
-            <div class="settings-box live-delay-box">
-              <h3>直播延时</h3>
-              <label class="check-line live-delay-toggle"><input name="delayEnabled" type="checkbox"> 启用</label>
-              <div class="live-delay-fields">
-                <label>延时时间（秒）
-                  <input name="delaySeconds" type="number" value="20" min="1" max="300" step="1" disabled aria-describedby="liveDelayMemoryEstimate">
-                </label>
-                <p id="liveDelayMemoryEstimate" class="form-help" role="status" aria-live="polite">启用后将使用内存缓冲编码后的直播内容。</p>
-              </div>
-            </div>
+                <section class="pipeline-editor-section" data-pipeline-panel="processing" hidden>
+                  <header><h3>画面处理</h3><p>设置无信号回退、静态水印和透明幻灯片。</p></header>
+                  <fieldset class="watermark-section no-signal-section"><legend>无信号推送画面</legend><p class="form-help">输入中断时推送此图片；未选择时使用默认黑屏。</p><div class="watermark-controls"><label>本地图片<input id="noSignalImageFile" type="file" accept="image/png,image/jpeg,image/webp"></label><button id="uploadNoSignalImageBtn" type="button">选择图片</button></div><div class="overlay-list" id="noSignalImagePreview" aria-label="无信号推送画面"></div><p class="watermark-status" id="noSignalImageStatus" role="status" aria-live="polite"></p></fieldset>
+                  <fieldset class="watermark-section" id="watermarkSection"><legend>画面水印</legend><div class="overlay-section-head"><p class="form-help">按列表顺序叠加，最多 20 张。</p><button id="previewWatermarkBtn" type="button" disabled>预览</button></div><div class="watermark-controls"><label>本地图片<input id="watermarkFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label><button type="button" id="uploadWatermarkBtn">添加水印</button></div><div class="overlay-list" id="watermarkList" aria-label="水印层级列表"></div><p class="watermark-status" id="watermarkStatus" role="status" aria-live="polite"></p></fieldset>
+                  <fieldset class="watermark-section slideshow-section" id="slideshowSection"><legend>幻灯片放映</legend><div class="overlay-section-head"><p class="form-help">透明图片按顺序循环淡入淡出。</p><button id="previewSlideshowBtn" type="button" disabled>预览</button></div><div class="compact-grid"><label>播放间隔（ms）<input id="slideshowIntervalMs" name="slideshowIntervalMs" type="number" value="2000" min="500" max="60000" step="100"></label><label>淡入淡出（ms）<input id="slideshowTransitionMs" name="slideshowTransitionMs" type="number" value="700" min="0" max="5000" step="100"></label></div><div class="watermark-controls"><label>本地图片<input id="slideshowFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label><button type="button" id="uploadSlideshowBtn">添加图片</button></div><div class="overlay-list" id="slideshowList" aria-label="幻灯片播放顺序"></div><p class="watermark-status" id="slideshowStatus" role="status" aria-live="polite"></p></fieldset>
+                </section>
 
-            <fieldset class="watermark-section no-signal-section">
-              <legend>无信号推送画面</legend>
-              <p class="form-help">直播源暂时无信号时推送此图片；未选择时使用默认黑屏。支持 PNG、JPEG、WebP，单张不超过 10 MiB。</p>
-              <div class="watermark-controls">
-                <label>本地图片<input id="noSignalImageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
-                <button id="uploadNoSignalImageBtn" type="button">选择图片</button>
-              </div>
-              <div class="overlay-list" id="noSignalImagePreview" aria-label="无信号推送画面"></div>
-              <p class="watermark-status" id="noSignalImageStatus" role="status" aria-live="polite"></p>
-            </fieldset>
+                <section class="pipeline-editor-section" data-pipeline-panel="advanced" hidden>
+                  <header><h3>高级设置</h3><p>仅在明确了解编码器行为时调整。</p></header>
+                  <div class="compact-grid">
+                    <label class="check-line"><input name="lookahead" type="checkbox"> 启用前向考虑</label>
+                    <label class="check-line"><input name="adaptiveQuantization" type="checkbox" checked> 启用自适应量化</label>
+                    <label>AQ 强度<input name="aqStrength" type="number" value="8" min="1" max="15" step="1"></label>
+                    <label class="check-line"><input name="sceneDetection" type="checkbox" checked> 启用场景检测</label>
+                    <label>输出像素格式<select name="pixelFormat"><option value="yuv420p">yuv420p</option><option value="nv12">nv12</option><option value="p010le">p010le</option><option value="yuv422p">yuv422p</option><option value="yuv444p">yuv444p</option></select></label>
+                    <label>色彩范围<select name="colorRange"><option value="tv">Limited / TV</option><option value="pc">Full / PC</option></select></label>
+                    <label class="check-line"><input name="repeatHeaders" type="checkbox" checked> 每个关键帧重发 SPS/PPS</label>
+                    <label class="full">编码器自定义参数<textarea name="customOptions" rows="4" maxlength="2048" placeholder="例如：-weighted_pred 1"></textarea><small>仅附加到视频编码器。不能覆盖输入、输出、映射、滤镜或编码器选择。</small></label>
+                  </div>
+                </section>
 
-            <fieldset class="watermark-section" id="watermarkSection">
-              <legend>画面水印</legend>
-              <div class="overlay-section-head">
-                <p class="form-help">按列表顺序叠加到全部输出，越靠后的图片层级越高；支持 PNG、JPEG、WebP，单张不超过 10 MiB，最多 20 张。</p>
-                <button id="previewWatermarkBtn" type="button" disabled>预览</button>
+                <footer class="pipeline-editor-actions">
+                  <button type="button" id="pipelinePreviousSectionBtn"><i data-lucide="chevron-left" aria-hidden="true"></i>上一步</button>
+                  <span id="pipelineSectionProgress">1 / 7</span>
+                  <button type="button" id="pipelineNextSectionBtn">下一步<i data-lucide="chevron-right" aria-hidden="true"></i></button>
+                  <button class="primary" id="pipelineSubmitBtn">保存任务</button>
+                  <button type="button" id="cancelPipelineEditBtn" hidden>取消修改</button>
+                  <button type="button" id="refreshBtn">刷新</button>
+                </footer>
               </div>
-              <div class="watermark-controls">
-                <label>本地图片<input id="watermarkFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label>
-                <button type="button" id="uploadWatermarkBtn">添加水印</button>
-              </div>
-              <div class="overlay-list" id="watermarkList" aria-label="水印层级列表"></div>
-              <p class="watermark-status" id="watermarkStatus" role="status" aria-live="polite"></p>
-            </fieldset>
-
-            <fieldset class="watermark-section slideshow-section" id="slideshowSection">
-              <legend>幻灯片放映</legend>
-              <div class="overlay-section-head">
-                <p class="form-help">透明图片按顺序循环淡入淡出，始终叠加在静态水印上方。透明区域继续显示原视频。</p>
-                <button id="previewSlideshowBtn" type="button" disabled>预览</button>
-              </div>
-              <div class="compact-grid">
-                <label>播放间隔（ms）<input id="slideshowIntervalMs" name="slideshowIntervalMs" type="number" value="2000" min="500" max="60000" step="100"></label>
-                <label>淡入淡出（ms）<input id="slideshowTransitionMs" name="slideshowTransitionMs" type="number" value="700" min="0" max="5000" step="100"></label>
-              </div>
-              <div class="watermark-controls">
-                <label>本地图片<input id="slideshowFile" type="file" multiple accept="image/png,image/jpeg,image/webp"></label>
-                <button type="button" id="uploadSlideshowBtn">添加图片</button>
-              </div>
-              <div class="overlay-list" id="slideshowList" aria-label="幻灯片播放顺序"></div>
-              <p class="watermark-status" id="slideshowStatus" role="status" aria-live="polite"></p>
-            </fieldset>
-
-            <div class="form-row">
-              <button class="primary" id="pipelineSubmitBtn">保存任务</button>
-              <button type="button" id="cancelPipelineEditBtn" hidden>取消修改</button>
-              <button type="button" id="refreshBtn">刷新</button>
             </div>
           </form>
 

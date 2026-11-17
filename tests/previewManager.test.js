@@ -186,10 +186,33 @@ test('publishes bounded Chinese diagnostics without source addresses or process 
 
   const descriptor = previews.describe(preview.id);
 
-  assert.deepEqual(Object.keys(descriptor).sort(), ['fps', 'height', 'id', 'latencyMs', 'message', 'sourceLabel', 'state', 'width']);
+  assert.deepEqual(Object.keys(descriptor).sort(), [
+    'audioCodec', 'bitrateKbps', 'bitrateSource', 'fps', 'height', 'id',
+    'latencyMs', 'message', 'sourceLabel', 'state', 'videoCodec', 'width',
+  ]);
   assert.equal(descriptor.state, 'failed');
   assert.match(descriptor.message, /预览进程启动失败/);
   assert.doesNotMatch(JSON.stringify(descriptor), /origin|secret|args/i);
+});
+
+test('monitor preview is a separate low-frame session and publishes input metadata', () => {
+  const { previews, child, spawned } = createPreviewHarness();
+  const input = { type: 'url', url: 'rtmp://origin.example.com/live/pgm' };
+  const full = previews.start({ input });
+  const monitor = previews.start({ input, monitor: true });
+
+  assert.notEqual(full.id, monitor.id);
+  assert.equal(spawned.length, 2);
+  assert.match(spawned[1].args[spawned[1].args.indexOf('-vf') + 1], /^fps=2,scale=.*480/);
+  child.stderr.emit('data', Buffer.from('Stream #0:0: Video: h264, yuv420p, 1920x1080, 8000 kb/s, 59.94 fps\n'));
+  const descriptor = previews.describe(monitor.id);
+  assert.equal(descriptor.width, 1920);
+  assert.equal(descriptor.height, 1080);
+  assert.equal(descriptor.fps, 59.94);
+  assert.equal(descriptor.bitrateKbps, 8000);
+  assert.equal(descriptor.bitrateSource, 'input');
+  assert.equal(descriptor.videoCodec, 'h264');
+  assert.equal(descriptor.latencyMs, 1500);
 });
 
 test('classifies a missing input signal separately from a failed process', () => {

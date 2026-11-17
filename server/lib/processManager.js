@@ -16,7 +16,7 @@ const {
   resolvePipelineSource,
   sourceFingerprint,
 } = require('./ffmpegBuilder');
-const { checkNvencAvailability } = require('./encoderCapabilities');
+const { checkEncoderAvailability, checkNvencAvailability } = require('./encoderCapabilities');
 const {
   parseFFmpegStatsLine,
   parseFFmpegStreamInfoLine,
@@ -535,6 +535,7 @@ class ProcessManager {
     prepareSlideshow = prepareSlideshowCache,
     prepareFallbackImage = prepareFallbackImageAsset,
     checkNvenc = null,
+    checkEncoder = null,
     checkDecklink = null,
     mediaBinaries = resolveMediaBinaries(),
     spawnProcess = spawn,
@@ -571,8 +572,10 @@ class ProcessManager {
     this.mediaBinaries = mediaBinaries;
     this.spawnProcess = spawnProcess;
     this.checkNvenc = checkNvenc || (() => checkNvencAvailability(undefined, this.mediaBinaries));
+    this.checkEncoder = checkEncoder || (encoder => checkEncoderAvailability(encoder, undefined, this.mediaBinaries));
     this.checkDecklink = checkDecklink || (source => checkDecklinkAvailability(source, undefined, this.mediaBinaries));
     this.nvencReady = false;
+    this.readyHardwareEncoders = new Set();
     this.scheduleInterval = scheduleInterval;
     this.clearScheduledInterval = clearScheduledInterval;
     this.scheduleTimeout = scheduleTimeout;
@@ -601,13 +604,31 @@ class ProcessManager {
   }
 
   ensureNvencAvailable() {
-    if (this.nvencReady) return;
-    const result = this.checkNvenc();
+    this.ensureEncoderAvailable('h264_nvenc');
+  }
+
+  ensureEncoderAvailable(encoder) {
+    const id = String(encoder || '').trim();
+    if (!id || this.readyHardwareEncoders.has(id)) return;
+    const result = id === 'h264_nvenc' ? this.checkNvenc() : this.checkEncoder(id);
     if (!result || !result.ok) {
       const diagnostic = String(result && result.diagnostic || '').trim() || '编码测试失败';
-      throw new Error(`NVIDIA NVENC 不可用：${diagnostic}。请检查驱动、GPU 可见性和 FFmpeg h264_nvenc 支持，或显式选择 libx264 进行 CPU 测试。`);
+      if (id === 'h264_nvenc') {
+        throw new Error(`NVIDIA NVENC 不可用：${diagnostic}。请检查驱动、GPU 可见性和 FFmpeg h264_nvenc 支持，或显式选择 libx264 进行 CPU 编码。`);
+      }
+      const label = {
+        h264_qsv: 'Intel Quick Sync',
+        h264_amf: 'AMD AMF',
+      }[id] || id;
+      throw new Error(`${label} 不可用：${diagnostic}。请检查硬件、驱动和 FFmpeg 编码器支持，或选择 libx264 软件编码。`);
     }
-    this.nvencReady = true;
+    this.readyHardwareEncoders.add(id);
+    if (id === 'h264_nvenc') this.nvencReady = true;
+  }
+
+  ensureEncodingPlanAvailable(encodingPlan) {
+    const encoder = encodingPlan && encodingPlan.videoEncoder;
+    if (['h264_nvenc', 'h264_qsv', 'h264_amf'].includes(encoder)) this.ensureEncoderAvailable(encoder);
   }
 
   ensureDecklinkAvailable(source) {
@@ -1646,7 +1667,7 @@ class ProcessManager {
     try {
       const fallbackSource = this.fallbackSourceForSession(session);
       const encodingPlan = resolveEncodingPlan(fallbackSource, session.settings);
-      if (encodingPlan.requiresNvenc) this.ensureNvencAvailable();
+      this.ensureEncodingPlanAvailable(encodingPlan);
       const lastSourceError = '输入信号不可用，正在推送无信号画面和静音并等待恢复';
       if (session.mode === 'shared-relay') {
         await this.transitionSharedRelaySource(session, {
@@ -1701,7 +1722,7 @@ class ProcessManager {
       try {
         this.ensureDecklinkAvailable(session.originalSource);
         const originalPlan = resolveEncodingPlan(session.originalSource, session.settings);
-        if (originalPlan.requiresNvenc) this.ensureNvencAvailable();
+        this.ensureEncodingPlanAvailable(originalPlan);
         await this.transitionSharedRelaySource(session, {
           source: session.originalSource,
           status: 'running',
@@ -1723,7 +1744,7 @@ class ProcessManager {
     try {
       this.ensureDecklinkAvailable(session.originalSource);
       const originalPlan = resolveEncodingPlan(session.originalSource, session.settings);
-      if (originalPlan.requiresNvenc) this.ensureNvencAvailable();
+      this.ensureEncodingPlanAvailable(originalPlan);
       this.clearFallbackRecovery(session);
       const exits = this.stopSessionProcesses(session);
       if (exits.length) await Promise.allSettled(exits);
@@ -1739,7 +1760,7 @@ class ProcessManager {
         if (exits.length) await Promise.allSettled(exits);
         if (this.sessions.get(session.pipelineId) !== session || session.intentionalStop) return;
         const fallbackPlan = this.setSessionSource(session, this.fallbackSourceForSession(session));
-        if (fallbackPlan.requiresNvenc) this.ensureNvencAvailable();
+        this.ensureEncodingPlanAvailable(fallbackPlan);
         session.status = 'fallback';
         session.lastSourceError = '输入信号仍不可用，继续推送黑屏和静音';
         this.startSessionProcesses(session);
@@ -1845,7 +1866,7 @@ class ProcessManager {
       error.statusCode = 400;
       throw error;
     }
-    if (encodingPlan.requiresNvenc) this.ensureNvencAvailable();
+    this.ensureEncodingPlanAvailable(encodingPlan);
     const existingSession = this.sessions.get(pipelineId);
     if (this.relayBufferFor(existingSession)) {
       const error = new Error('共享转推任务正在运行，请先停止后再重新开始');
@@ -2064,7 +2085,7 @@ class ProcessManager {
     validateStaticWatermarkFiles(nextSettings);
     this.ensureDecklinkAvailable(source);
     const nextPlan = resolveEncodingPlan(source, nextSettings);
-    if (nextPlan.requiresNvenc) this.ensureNvencAvailable();
+    this.ensureEncodingPlanAvailable(nextPlan);
 
     const relayBuffer = this.relayBufferFor(session);
     if (!relayBuffer || typeof relayBuffer.beginInputSwitch !== 'function') {

@@ -69,6 +69,15 @@ let selectedDestinationIds = [];
 let pipelineFormGeneration = 0;
 let pipelineSubmitPending = false;
 let pipelineCardFilters = { status: 'all', query: '' };
+const PIPELINE_SECTION_ORDER = ['basic', 'input', 'output', 'video', 'audio', 'processing', 'advanced'];
+let activePipelineSection = 'basic';
+let pipelineCardStructureSignature = '';
+const pipelineCardMonitorState = {
+  sessions: new Map(),
+  visible: new Set(),
+  observer: null,
+  maxActive: 3,
+};
 let pendingLiveDelayStopPipelineId = null;
 let pipelineWatermarks = [];
 let pipelineNoSignalImage = null;
@@ -88,7 +97,7 @@ let monitorHistoryAbortController = null;
 let systemStatusPollPending = false;
 let monitorPollTimer = null;
 let systemStatusPollTimer = null;
-let encodingCapabilities = { checked: false, nvencAvailable: true, message: '' };
+let encodingCapabilities = { checked: false, nvencAvailable: true, message: '', encoders: {} };
 const authState = {
   authenticated: false,
   username: '',
@@ -225,6 +234,7 @@ function leaveConsole() {
   monitorHistoryAbortController = null;
   systemStatusPollPending = false;
   stopPolling();
+  releaseAllPipelineCardMonitors();
   detachInputPreview();
   const overlayPreviewId = detachOverlayLayoutPreview();
   detachStudioSwitcher();
@@ -477,6 +487,8 @@ function show(view) {
   if ($('#topbarPageTitle')) $('#topbarPageTitle').textContent = meta.title;
   if ($('#topbarPageKicker')) $('#topbarPageKicker').textContent = meta.kicker;
   if ($('#consoleApp')) $('#consoleApp').dataset.currentView = view;
+  if (view !== 'distribution') releaseAllPipelineCardMonitors();
+  else requestAnimationFrame(syncPipelineCardMonitors);
   if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
@@ -807,6 +819,7 @@ function drawSystemChart(canvas, points = [], color = '#0c8abd', maxValue = 100)
 
 function renderSystemResourceList(resources) {
   const list = $('#systemResourceList');
+  if (!list) return;
   const signature = resources.map(resource => resource.id).join('|');
   if (signature !== systemStatusState.resourceSignature) {
     const focused = document.activeElement && document.activeElement.dataset
@@ -858,6 +871,7 @@ function systemPrimaryValue(resource) {
 
 function renderSystemDetail(resource) {
   const detail = $('#systemResourceDetail');
+  if (!detail || !resource) return;
   detail.style.setProperty('--resource-accent', resource.accent);
   $('#systemDetailTitle').textContent = resource.label;
   $('#systemDetailSubtitle').textContent = systemResourceSubtitle(resource);
@@ -1007,11 +1021,70 @@ function pipelineFormOwns(generation, pipelineId) {
 }
 
 function showPipelineValidationError(message) {
+  const friendly = friendlyPipelineError(message);
+  const summary = $('#pipelineValidationSummary');
+  if (summary) {
+    summary.textContent = friendly;
+    summary.hidden = false;
+  }
   const status = $('#encodingModeStatus');
-  status.textContent = message;
+  status.textContent = friendly;
   status.classList.add('error');
+  const section = /输入|采集|DeckLink|URL|素材|场景/.test(friendly)
+    ? 'input'
+    : /输出目标|端点/.test(friendly)
+      ? 'output'
+      : /编码|码率|Profile|Level|NVENC|QSV|AMF|x264|像素|GOP|B 帧|参考帧/.test(friendly)
+        ? 'video'
+        : activePipelineSection;
+  switchPipelineSection(section, { focus: false });
   status.focus();
-  alert(message);
+}
+
+function friendlyPipelineError(message) {
+  const text = String(message || '保存任务失败')
+    .replace(/^Invalid FFmpeg configuration:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/h264_nvenc.*rc.*22|rc.*value 22/i.test(text)) {
+    return 'NVENC 码率控制参数无效。质量值不能作为 NVENC 的 RC 模式。';
+  }
+  if (/Error setting option rc|Unable to parse option value.*rc|rc.*Invalid argument/i.test(text)) {
+    return '码率控制参数无效。请为当前编码器选择 CBR、VBR、ABR 或恒定质量中的可用模式。';
+  }
+  if (/CUDA_ERROR_NO_DEVICE|Cannot load libcuda|NVIDIA driver|nvidia-smi/i.test(text)) {
+    return 'NVIDIA 编码器当前不可用，请检查驱动状态和 GPU 可见性，或改用 x264 软件编码。';
+  }
+  if (/Invalid argument|Conversion failed|Error initializing output stream/i.test(text)) {
+    return '编码器拒绝了当前参数组合，请检查码率控制、Preset、Profile、像素格式和高级参数。';
+  }
+  if (/ffmpeg version|configuration:|libav(?:util|codec|format)|Stream mapping:/i.test(text)) {
+    return 'FFmpeg 未能应用当前任务配置，请检查输入信号、编码器能力和高级参数。';
+  }
+  return text.length > 280 ? `${text.slice(0, 277)}...` : text;
+}
+
+function switchPipelineSection(section, { focus = true } = {}) {
+  const next = PIPELINE_SECTION_ORDER.includes(section) ? section : 'basic';
+  activePipelineSection = next;
+  $$('[data-pipeline-section]').forEach(button => {
+    const active = button.dataset.pipelineSection === next;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'step');
+    else button.removeAttribute('aria-current');
+  });
+  $$('[data-pipeline-panel]').forEach(panel => {
+    const active = panel.dataset.pipelinePanel === next;
+    panel.hidden = !active;
+    panel.classList.toggle('active', active);
+  });
+  const index = PIPELINE_SECTION_ORDER.indexOf(next);
+  const previous = $('#pipelinePreviousSectionBtn');
+  const following = $('#pipelineNextSectionBtn');
+  if (previous) previous.disabled = index <= 0;
+  if (following) following.hidden = index >= PIPELINE_SECTION_ORDER.length - 1;
+  if ($('#pipelineSectionProgress')) $('#pipelineSectionProgress').textContent = `${index + 1} / ${PIPELINE_SECTION_ORDER.length}`;
+  if (focus) $('[data-pipeline-panel]:not([hidden]) h3')?.focus?.();
 }
 
 function validatePipelineInput(values, currentState = state || {}) {
@@ -1147,16 +1220,19 @@ function normalizeEncodingInput(input = {}) {
 async function loadEncodingCapabilities() {
   try {
     const data = await api('/api/encoding-capabilities');
+    const encoders = Object.fromEntries((data.encoders || []).map(item => [item.id, item]));
     encodingCapabilities = {
       checked: true,
       nvencAvailable: data.nvencAvailable === true,
       message: String(data.message || ''),
+      encoders,
     };
   } catch (error) {
     encodingCapabilities = {
       checked: true,
       nvencAvailable: false,
       message: String(error && error.message || '无法读取编码能力'),
+      encoders: {},
     };
   }
   syncEncodingControls($('#pipelineForm'));
@@ -1184,6 +1260,8 @@ function resolveEncodingMode(requested, input, hasVisualProcessing) {
     || encodingCapabilities.nvencAvailable;
   if (requested === 'libx264') return 'cpu';
   if (requested === 'h264_nvenc') return 'nvenc';
+  if (requested === 'h264_qsv') return 'qsv';
+  if (requested === 'h264_amf') return 'amf';
   if (requested === 'copy') return 'copy';
   if (requested !== 'auto') return 'unsupported';
   if (inputType === 'capture') return nvencAvailable ? 'nvenc' : 'cpu';
@@ -1192,6 +1270,38 @@ function resolveEncodingMode(requested, input, hasVisualProcessing) {
     return hasVisualProcessing ? (nvencAvailable ? 'nvenc' : 'cpu') : 'copy';
   }
   return 'unsupported';
+}
+
+function replaceSelectChoices(select, choices, preferred) {
+  if (!select) return;
+  const value = String(preferred || select.value || '');
+  select.innerHTML = choices.map(choice => `<option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>`).join('');
+  select.value = choices.some(choice => choice.value === value) ? value : choices[0]?.value || '';
+}
+
+function encoderFormProfile(form, mode) {
+  const requested = form && form.elements && form.elements.videoEncoder
+    ? form.elements.videoEncoder.value
+    : 'auto';
+  const encoder = requested === 'auto'
+    ? ({ nvenc: 'h264_nvenc', cpu: 'libx264', qsv: 'h264_qsv', amf: 'h264_amf', copy: 'copy' }[mode] || '')
+    : requested;
+  const presets = {
+    libx264: ['veryfast', 'ultrafast', 'superfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
+    h264_nvenc: ['p4', 'p1', 'p2', 'p3', 'p5', 'p6', 'p7'],
+    h264_qsv: ['medium', 'veryfast', 'faster', 'fast', 'slow', 'slower', 'veryslow'],
+    h264_amf: ['balanced', 'speed', 'quality'],
+  }[encoder] || ['veryfast'];
+  const tunes = encoder === 'h264_nvenc'
+    ? [{ value: 'll', label: 'LL 低延迟' }, { value: 'hq', label: 'HQ 高质量' }, { value: 'ull', label: 'ULL 超低延迟' }, { value: 'lossless', label: 'Lossless 无损' }]
+    : encoder === 'libx264'
+      ? [{ value: 'none', label: '无' }, { value: 'zerolatency', label: 'Zero Latency' }, { value: 'film', label: 'Film' }, { value: 'animation', label: 'Animation' }, { value: 'grain', label: 'Grain' }]
+      : [{ value: 'none', label: '此编码器不使用 Tune' }];
+  return {
+    encoder,
+    presets: presets.map(value => ({ value, label: value })),
+    tunes,
+  };
 }
 
 function resolveFormEncodingMode(form) {
@@ -1208,36 +1318,60 @@ function syncEncodingControls(form = $('#pipelineForm')) {
   const pipelineMode = elements.mode ? elements.mode.value : 'shared-relay';
   const invalidCopy = requested === 'copy' && (input.type === 'capture' || formHasVisualProcessing());
   const capabilities = typeof encodingCapabilities === 'undefined'
-    ? { checked: false, nvencAvailable: true, message: '' }
+    ? { checked: false, nvencAvailable: true, message: '', encoders: {} }
     : encodingCapabilities;
-  const nvencUnavailable = capabilities.checked && !capabilities.nvencAvailable;
+  const encoderProfile = encoderFormProfile(form, mode);
+  const selectedCapability = capabilities.encoders && capabilities.encoders[encoderProfile.encoder];
+  const selectedUnavailable = capabilities.checked && selectedCapability && selectedCapability.available === false;
   let error = '';
   if (invalidCopy) error = '原样复制不能用于采集卡输入、水印或幻灯片，请选择自动或明确的视频编码器';
-  else if (requested === 'h264_nvenc' && nvencUnavailable) {
-    error = capabilities.message || '当前主机没有可用的 NVIDIA GPU，请选择 libx264（CPU）';
+  else if (selectedUnavailable) {
+    error = `${selectedCapability.label || encoderProfile.encoder} 当前不可用：${selectedCapability.reason || '硬件或 FFmpeg 不支持'}`;
   }
   else if (mode === 'copy' && pipelineMode === 'direct') {
     error = '原样复制必须使用共享转推，直连推送只支持 CPU 或 NVENC 编码';
   }
 
-  const nvencOption = elements.videoEncoder && typeof elements.videoEncoder.querySelector === 'function'
-    ? elements.videoEncoder.querySelector('option[value="h264_nvenc"]')
-    : null;
-  if (nvencOption) {
-    nvencOption.disabled = nvencUnavailable;
-    nvencOption.textContent = nvencUnavailable ? 'h264_nvenc（本机不可用）' : 'h264_nvenc';
+  for (const encoder of ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf']) {
+    const option = elements.videoEncoder && elements.videoEncoder.querySelector(`option[value="${encoder}"]`);
+    const capability = capabilities.encoders && capabilities.encoders[encoder];
+    if (!option || !capability || !capabilities.checked) continue;
+    option.disabled = capability.available === false;
+    option.textContent = capability.available === false
+      ? `${capability.label || encoder}（本机不可用）`
+      : capability.label || encoder;
   }
-  else if (mode === 'unsupported') {
+  if (mode === 'unsupported') {
     error = requested === 'auto'
       ? '自动模式无法识别当前输入，请选择明确的视频编码器'
       : '当前视频编码器无法识别，请选择自动或明确的视频编码器';
   }
 
   const copyMode = mode === 'copy';
-  for (const name of ['bitrateKbps', 'outputResolution', 'fps', 'keyframeSec', 'preset', 'profile']) {
+  const currentPreset = elements.preset && elements.preset.value;
+  const currentTune = elements.tune && elements.tune.value;
+  replaceSelectChoices(elements.preset, encoderProfile.presets, currentPreset);
+  replaceSelectChoices(elements.tune, encoderProfile.tunes, currentTune);
+  if (elements.multipass) elements.multipass.disabled = copyMode || encoderProfile.encoder !== 'h264_nvenc';
+
+  const rateControl = elements.rateControl ? elements.rateControl.value : 'cbr';
+  if (encoderProfile.encoder === 'h264_nvenc' && rateControl === 'abr') {
+    error = 'NVENC 不支持 ABR，请选择 CBR、VBR 或恒定质量';
+  }
+  $$('[data-rate-field]').forEach(label => {
+    const kind = label.dataset.rateField;
+    label.hidden = kind === 'crf' ? rateControl !== 'crf' : kind === 'bitrate' ? rateControl === 'crf' : false;
+  });
+
+  for (const name of [
+    'rateControl', 'bitrateKbps', 'maxBitrateKbps', 'bufferSizeKbps', 'crf', 'outputResolution', 'fps',
+    'keyframeSec', 'preset', 'tune', 'multipass', 'profile', 'level', 'bFrames', 'referenceFrames',
+    'lookahead', 'adaptiveQuantization', 'aqStrength', 'sceneDetection', 'pixelFormat', 'colorRange',
+    'repeatHeaders', 'customOptions',
+  ]) {
     const control = elements[name];
     if (!control) continue;
-    control.disabled = copyMode;
+    if (name !== 'multipass') control.disabled = copyMode;
     if (copyMode) control.setAttribute('aria-disabled', 'true');
     else control.removeAttribute('aria-disabled');
   }
@@ -1248,6 +1382,8 @@ function syncEncodingControls(form = $('#pipelineForm')) {
       copy: '实际模式：原样复制',
       nvenc: '实际模式：NVIDIA NVENC',
       cpu: '实际模式：CPU 编码',
+      qsv: '实际模式：Intel Quick Sync',
+      amf: '实际模式：AMD AMF',
       unsupported: '请选择明确的视频编码器',
     }[mode];
     status.textContent = error || modeText || '请选择明确的视频编码器';
@@ -1257,7 +1393,7 @@ function syncEncodingControls(form = $('#pipelineForm')) {
 }
 
 function encodingModeLabel(mode) {
-  return { copy: 'copy', nvenc: 'NVENC', cpu: 'CPU' }[mode] || '未知';
+  return { copy: 'copy', nvenc: 'NVENC', qsv: 'QSV', amf: 'AMF', cpu: 'CPU' }[mode] || '未知';
 }
 
 function estimateLiveDelayMemoryMib(delaySeconds, videoKbps, audioKbps) {
@@ -1317,10 +1453,27 @@ function settingsFromForm(form) {
     live: {
       videoEncoder: formControlValue(form, fd, 'videoEncoder', 'auto'),
       audioEncoder: fd.get('audioEncoder') || 'aac',
+      rateControl: formControlValue(form, fd, 'rateControl', 'cbr'),
       bitrateKbps: Number(formControlValue(form, fd, 'bitrateKbps', 8000)),
+      maxBitrateKbps: Number(formControlValue(form, fd, 'maxBitrateKbps', 8000)),
+      bufferSizeKbps: Number(formControlValue(form, fd, 'bufferSizeKbps', 16000)),
+      crf: Number(formControlValue(form, fd, 'crf', 23)),
       keyframeSec: Number(formControlValue(form, fd, 'keyframeSec', 2)),
       preset: formControlValue(form, fd, 'preset', 'veryfast'),
+      tune: formControlValue(form, fd, 'tune', 'zerolatency'),
+      multipass: formControlValue(form, fd, 'multipass', 'disabled'),
       profile: formControlValue(form, fd, 'profile', 'high'),
+      level: formControlValue(form, fd, 'level', 'auto'),
+      bFrames: Number(formControlValue(form, fd, 'bFrames', 2)),
+      referenceFrames: Number(formControlValue(form, fd, 'referenceFrames', 3)),
+      lookahead: Boolean(form.elements.lookahead && form.elements.lookahead.checked),
+      adaptiveQuantization: Boolean(form.elements.adaptiveQuantization && form.elements.adaptiveQuantization.checked),
+      aqStrength: Number(formControlValue(form, fd, 'aqStrength', 8)),
+      sceneDetection: Boolean(form.elements.sceneDetection && form.elements.sceneDetection.checked),
+      pixelFormat: formControlValue(form, fd, 'pixelFormat', 'yuv420p'),
+      colorRange: formControlValue(form, fd, 'colorRange', 'tv'),
+      repeatHeaders: Boolean(form.elements.repeatHeaders && form.elements.repeatHeaders.checked),
+      customOptions: formControlValue(form, fd, 'customOptions', ''),
       delayEnabled,
       delaySeconds,
     },
@@ -1541,10 +1694,27 @@ function fillSettingsForm(form, settings = {}) {
   const firstTrack = Array.isArray(audio.tracks) && audio.tracks.length ? audio.tracks[0] : {};
   setControlValue(form, 'videoEncoder', live.videoEncoder || 'auto');
   setControlValue(form, 'audioEncoder', live.audioEncoder || 'aac');
+  setControlValue(form, 'rateControl', live.rateControl || 'cbr');
   setControlValue(form, 'bitrateKbps', live.bitrateKbps || 8000);
+  setControlValue(form, 'maxBitrateKbps', live.maxBitrateKbps || live.bitrateKbps || 8000);
+  setControlValue(form, 'bufferSizeKbps', live.bufferSizeKbps || (Number(live.bitrateKbps || 8000) * 2));
+  setControlValue(form, 'crf', live.crf ?? 23);
   setControlValue(form, 'keyframeSec', live.keyframeSec || 2);
   setControlValue(form, 'preset', live.preset || 'veryfast');
+  setControlValue(form, 'tune', live.tune || 'zerolatency');
+  setControlValue(form, 'multipass', live.multipass || 'disabled');
   setControlValue(form, 'profile', live.profile || 'high');
+  setControlValue(form, 'level', live.level || 'auto');
+  setControlValue(form, 'bFrames', live.bFrames ?? 2);
+  setControlValue(form, 'referenceFrames', live.referenceFrames ?? 3);
+  setControlValue(form, 'aqStrength', live.aqStrength ?? 8);
+  setControlValue(form, 'pixelFormat', live.pixelFormat || 'yuv420p');
+  setControlValue(form, 'colorRange', live.colorRange || 'tv');
+  setControlValue(form, 'customOptions', live.customOptions || '');
+  if (form.elements.lookahead) form.elements.lookahead.checked = live.lookahead === true;
+  if (form.elements.adaptiveQuantization) form.elements.adaptiveQuantization.checked = live.adaptiveQuantization !== false;
+  if (form.elements.sceneDetection) form.elements.sceneDetection.checked = live.sceneDetection !== false;
+  if (form.elements.repeatHeaders) form.elements.repeatHeaders.checked = live.repeatHeaders !== false;
   setControlValue(form, 'outputResolution', video.outputResolution || '1920x1080');
   setControlValue(form, 'fps', video.fps || '59.94');
   setControlValue(form, 'sampleRate', audio.sampleRate || '48000');
@@ -1623,10 +1793,16 @@ function resetPipelineForm() {
   $('#noSignalImageStatus').classList.remove('error');
   $('#uploadWatermarkBtn').disabled = false;
   $('#uploadSlideshowBtn').disabled = false;
+  if ($('#pipelineValidationSummary')) {
+    $('#pipelineValidationSummary').hidden = true;
+    $('#pipelineValidationSummary').textContent = '';
+  }
   renderPipelineOverlays();
   renderNoSignalImage();
   updateInputFields();
   syncLiveDelayControls();
+  syncEncodingControls();
+  switchPipelineSection('basic', { focus: false });
   updatePipelineEditUi();
 }
 
@@ -3126,6 +3302,186 @@ function renderPipelineTaskSummary(pipelines = []) {
     <span class="${counts.errors ? 'is-error' : ''}"><i data-lucide="triangle-alert" aria-hidden="true"></i><strong>${counts.errors}</strong> 个异常</span>`;
 }
 
+function updatePipelineCardRuntime(pipelines = []) {
+  for (const pipeline of pipelines) {
+    const summary = pipelineMonitorSummary(pipeline);
+    const bitrate = document.querySelector(`[data-runtime-bitrate="${CSS.escape(pipeline.id)}"]`);
+    const fps = document.querySelector(`[data-runtime-fps="${CSS.escape(pipeline.id)}"]`);
+    if (bitrate) bitrate.textContent = summary.bitrate;
+    if (fps) fps.textContent = summary.fps;
+  }
+}
+
+function pipelineCardMonitorElements(pipelineId) {
+  const escaped = CSS.escape(String(pipelineId || ''));
+  return {
+    frame: document.querySelector(`[data-monitor-pipeline-id="${escaped}"]`),
+    image: document.querySelector(`[data-monitor-image="${escaped}"]`),
+    placeholder: document.querySelector(`[data-monitor-placeholder="${escaped}"]`),
+    status: document.querySelector(`[data-monitor-status="${escaped}"]`),
+    meta: document.querySelector(`[data-monitor-meta="${escaped}"]`),
+  };
+}
+
+function pipelineCardMonitorMessage(preview = {}) {
+  if (preview.state === 'receiving') return '低帧率实时监看';
+  if (preview.state === 'no-signal') return '暂无输入源';
+  if (preview.state === 'failed') return preview.message || '监看暂不可用';
+  return '正在连接输入源';
+}
+
+function renderPipelineCardMonitor(pipelineId, preview = {}) {
+  const elements = pipelineCardMonitorElements(pipelineId);
+  if (!elements.frame) return;
+  const receiving = preview.state === 'receiving';
+  elements.frame.classList.toggle('is-receiving', receiving);
+  elements.frame.classList.toggle('is-unavailable', ['failed', 'no-signal'].includes(preview.state));
+  if (elements.image) elements.image.hidden = !receiving;
+  if (elements.placeholder) elements.placeholder.hidden = receiving;
+  if (elements.status) elements.status.textContent = pipelineCardMonitorMessage(preview);
+  if (elements.meta) {
+    const details = [];
+    const width = Number(preview.width);
+    const height = Number(preview.height);
+    const fps = formatPreviewFps(preview.fps);
+    const bitrate = Number(preview.bitrateKbps);
+    if (width > 0 && height > 0) details.push(`${width}x${height}`);
+    if (fps) details.push(`${fps} fps`);
+    if (bitrate > 0) details.push(compactBitrate(bitrate));
+    elements.meta.textContent = details.length ? details.join(' / ') : '480p / 2 fps 低负载监看';
+  }
+}
+
+function clearPipelineCardMonitorPoll(session) {
+  if (session && session.pollTimer) clearTimeout(session.pollTimer);
+  if (session) session.pollTimer = null;
+}
+
+async function pollPipelineCardMonitor(pipelineId, session) {
+  if (pipelineCardMonitorState.sessions.get(pipelineId) !== session || !session.id) return;
+  try {
+    const preview = await api(`/api/previews/${encodeURIComponent(session.id)}`);
+    if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) return;
+    renderPipelineCardMonitor(pipelineId, preview);
+  } catch (error) {
+    if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) return;
+    renderPipelineCardMonitor(pipelineId, { state: 'failed', message: friendlyPipelineError(error.message) });
+    session.pollTimer = setTimeout(() => {
+      if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) return;
+      releasePipelineCardMonitor(pipelineId).finally(pumpPipelineCardMonitors);
+    }, 10_000);
+    return;
+  }
+  session.pollTimer = setTimeout(() => pollPipelineCardMonitor(pipelineId, session), 1500);
+}
+
+async function startPipelineCardMonitor(pipelineId) {
+  if (pipelineCardMonitorState.sessions.has(pipelineId)) return;
+  const pipeline = (state && state.pipelines || []).find(item => item.id === pipelineId);
+  if (!pipeline) return;
+  const session = { id: '', pollTimer: null, starting: true };
+  pipelineCardMonitorState.sessions.set(pipelineId, session);
+  renderPipelineCardMonitor(pipelineId, { state: 'connecting' });
+  try {
+    const preview = await api('/api/previews?format=mjpeg', {
+      method: 'POST',
+      body: JSON.stringify({ ...createPipelineInputPreviewRequest(pipeline), format: 'mjpeg', monitor: true }),
+    });
+    if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) {
+      await api(`/api/previews/${encodeURIComponent(preview.id)}/stop`, { method: 'POST', body: '{}' }).catch(() => {});
+      return;
+    }
+    session.id = preview.id;
+    session.starting = false;
+    const elements = pipelineCardMonitorElements(pipelineId);
+    if (elements.image) {
+      elements.image.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mjpeg&monitor=1`;
+      elements.image.addEventListener('load', () => {
+        if (pipelineCardMonitorState.sessions.get(pipelineId) === session) {
+          renderPipelineCardMonitor(pipelineId, { ...preview, state: 'receiving' });
+        }
+      }, { once: true });
+    }
+    renderPipelineCardMonitor(pipelineId, preview);
+    pollPipelineCardMonitor(pipelineId, session);
+  } catch (error) {
+    session.starting = false;
+    renderPipelineCardMonitor(pipelineId, {
+      state: /未检测到输入|没有可用|不存在/.test(error.message) ? 'no-signal' : 'failed',
+      message: /直连采集/.test(error.message) ? '直连采集占用设备，停止任务后可监看' : friendlyPipelineError(error.message),
+    });
+    session.pollTimer = setTimeout(() => {
+      if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) return;
+      pipelineCardMonitorState.sessions.delete(pipelineId);
+      pumpPipelineCardMonitors();
+    }, 10_000);
+  }
+}
+
+async function releasePipelineCardMonitor(pipelineId) {
+  const session = pipelineCardMonitorState.sessions.get(pipelineId);
+  if (!session) return;
+  pipelineCardMonitorState.sessions.delete(pipelineId);
+  clearPipelineCardMonitorPoll(session);
+  const elements = pipelineCardMonitorElements(pipelineId);
+  if (elements.image) {
+    elements.image.removeAttribute('src');
+    elements.image.hidden = true;
+  }
+  if (session.id) {
+    await api(`/api/previews/${encodeURIComponent(session.id)}/stop`, { method: 'POST', body: '{}' }).catch(() => {});
+  }
+}
+
+function releaseAllPipelineCardMonitors() {
+  const ids = Array.from(pipelineCardMonitorState.sessions.keys());
+  pipelineCardMonitorState.visible.clear();
+  for (const id of ids) releasePipelineCardMonitor(id);
+}
+
+function pumpPipelineCardMonitors() {
+  const active = pipelineCardMonitorState.sessions.size;
+  if (active >= pipelineCardMonitorState.maxActive) return;
+  const candidates = Array.from(pipelineCardMonitorState.visible).filter(id => !pipelineCardMonitorState.sessions.has(id));
+  for (const id of candidates.slice(0, pipelineCardMonitorState.maxActive - active)) startPipelineCardMonitor(id);
+}
+
+function syncPipelineCardMonitors() {
+  const frames = $$('[data-monitor-pipeline-id]');
+  const ids = new Set(frames.map(frame => frame.dataset.monitorPipelineId));
+  for (const id of Array.from(pipelineCardMonitorState.sessions.keys())) {
+    if (!ids.has(id)) releasePipelineCardMonitor(id);
+  }
+  if (!('IntersectionObserver' in window)) {
+    pipelineCardMonitorState.visible = new Set(Array.from(ids).slice(0, pipelineCardMonitorState.maxActive));
+    pumpPipelineCardMonitors();
+    return;
+  }
+  if (pipelineCardMonitorState.observer) pipelineCardMonitorState.observer.disconnect();
+  pipelineCardMonitorState.visible.clear();
+  pipelineCardMonitorState.observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const id = entry.target.dataset.monitorPipelineId;
+      if (!id) continue;
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.15 && !document.hidden) {
+        pipelineCardMonitorState.visible.add(id);
+      } else {
+        pipelineCardMonitorState.visible.delete(id);
+        releasePipelineCardMonitor(id).finally(pumpPipelineCardMonitors);
+      }
+    }
+    pumpPipelineCardMonitors();
+  }, { threshold: [0, 0.15, 0.5] });
+  frames.forEach(frame => {
+    pipelineCardMonitorState.observer.observe(frame);
+    const session = pipelineCardMonitorState.sessions.get(frame.dataset.monitorPipelineId);
+    if (session && session.id) {
+      const image = frame.querySelector('[data-monitor-image]');
+      if (image) image.src = `/api/previews/${encodeURIComponent(session.id)}/stream?format=mjpeg&monitor=1`;
+    }
+  });
+}
+
 function renderPipelineCards() {
   const switchableIds = new Set(runningStudioPipelines(state.pipelines || [], state.monitor || {}).map(item => item.id));
   const pipelines = state.pipelines || [];
@@ -3140,6 +3496,24 @@ function renderPipelineCards() {
       ? `共 ${pipelines.length} 个任务`
       : `显示 ${visiblePipelines.length} 个，共 ${pipelines.length} 个任务`;
   }
+  const structureSignature = JSON.stringify(visiblePipelines.map(p => ({
+    id: p.id,
+    name: p.name,
+    input: p.input,
+    sourceId: p.sourceId,
+    destinationIds: p.destinationIds,
+    mode: p.mode,
+    settings: p.settings,
+    status: pipelineRuntimeStatus(p),
+    statusMessage: pipelineRuntimeMessage(p),
+    program: state.programs && state.programs[p.id],
+    switchable: switchableIds.has(p.id),
+  })));
+  if (pipelineCardStructureSignature === structureSignature && $('#pipelineCards')?.children.length) {
+    updatePipelineCardRuntime(visiblePipelines);
+    return;
+  }
+  pipelineCardStructureSignature = structureSignature;
   const markup = visiblePipelines.map(p => {
     const destinations = (p.destinationIds || []).map(id => (state.destinations || []).find(d => d.id === id)).filter(Boolean);
     const enabledDestinations = pipelineEnabledDestinations(p);
@@ -3168,18 +3542,21 @@ function renderPipelineCards() {
       ? `<button class="pipeline-primary-control is-stop" data-action="stop-pipeline" data-id="${escapeHtml(p.id)}" type="button"><i data-lucide="square" aria-hidden="true"></i><span>停止</span></button>`
       : `<button class="pipeline-primary-control is-start" data-action="start-pipeline" data-id="${escapeHtml(p.id)}" type="button"><i data-lucide="play" aria-hidden="true"></i><span>启动</span></button>`;
     return `<article class="pipeline-task-card ${escapeHtml(status)}" data-pipeline-id="${escapeHtml(p.id)}">
-      <div class="pipeline-card-preview">
+      <div class="pipeline-card-preview" data-monitor-pipeline-id="${escapeHtml(p.id)}">
+        <img class="pipeline-card-monitor-image" data-monitor-image="${escapeHtml(p.id)}" alt="" hidden>
         <div class="pipeline-card-preview-top">
           <span class="pipeline-card-state"><i aria-hidden="true"></i>${escapeHtml(pipelineStatusLabel(status))}</span>
           <span class="pipeline-card-output-count"><i data-lucide="radio-tower" aria-hidden="true"></i>${outputCount} 路输出</span>
         </div>
         <button class="pipeline-card-preview-trigger" data-action="preview-pipeline" data-id="${escapeHtml(p.id)}" type="button" aria-label="预览 ${escapeHtml(p.name)} 的输入源">
-          <i data-lucide="${inputMeta.icon}" aria-hidden="true"></i>
-          <strong>预览输入源</strong>
-          <small>${escapeHtml(inputMeta.label)}</small>
+          <span class="pipeline-card-monitor-placeholder" data-monitor-placeholder="${escapeHtml(p.id)}">
+            <i data-lucide="${inputMeta.icon}" aria-hidden="true"></i>
+            <strong data-monitor-status="${escapeHtml(p.id)}">正在等待监看</strong>
+            <small>${escapeHtml(inputMeta.label)}</small>
+          </span>
         </button>
         <div class="pipeline-card-preview-meta">
-          <span><i data-lucide="video" aria-hidden="true"></i>${escapeHtml(resolution)} / ${escapeHtml(fps)} fps</span>
+          <span data-monitor-meta="${escapeHtml(p.id)}"><i data-lucide="video" aria-hidden="true"></i>${escapeHtml(resolution)} / ${escapeHtml(fps)} fps</span>
           <span>${escapeHtml(processing)}</span>
         </div>
       </div>
@@ -3206,8 +3583,8 @@ function renderPipelineCards() {
       </div>
       <footer class="pipeline-card-footer">
         <div class="pipeline-card-live-metrics" aria-label="实时输出指标">
-          <span><strong>${escapeHtml(monitorSummary.bitrate)}</strong><small>实时总码率</small></span>
-          <span><strong>${escapeHtml(monitorSummary.fps)}</strong><small>最低输出帧率</small></span>
+          <span><strong data-runtime-bitrate="${escapeHtml(p.id)}">${escapeHtml(monitorSummary.bitrate)}</strong><small>实时总码率</small></span>
+          <span><strong data-runtime-fps="${escapeHtml(p.id)}">${escapeHtml(monitorSummary.fps)}</strong><small>最低输出帧率</small></span>
         </div>
         <div class="pipeline-card-actions">
           ${primaryAction}
@@ -3228,6 +3605,7 @@ function renderPipelineCards() {
   replaceContainerHtmlPreservingFocus($('#pipelineCards'), markup);
   bindRendererActions($('#pipelineCards'));
   refreshIcons();
+  syncPipelineCardMonitors();
 }
 
 function renderDestinations() {
@@ -3963,6 +4341,7 @@ function renderInputPreview(preview = {}) {
   const width = Number(preview.width);
   const height = Number(preview.height);
   const fps = formatPreviewFps(preview.fps);
+  const bitrateKbps = Number(preview.bitrateKbps);
   const latencyMs = Number(preview.latencyMs);
   const details = [];
 
@@ -3976,6 +4355,11 @@ function renderInputPreview(preview = {}) {
   if (browserVideo && video.src !== preview.browserVideoUrl) video.src = preview.browserVideoUrl;
   if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) details.push(`${width} x ${height}`);
   if (fps) details.push(`${fps} fps`);
+  if (Number.isFinite(bitrateKbps) && bitrateKbps > 0) {
+    const prefix = preview.bitrateSource === 'input' ? '输入' : '预览';
+    details.push(`${prefix} ${compactBitrate(bitrateKbps)}`);
+  }
+  if (preview.videoCodec) details.push(String(preview.videoCodec).toUpperCase());
   if (Number.isFinite(latencyMs) && latencyMs > 0) details.push(`约 ${Math.round(latencyMs / 100) / 10} 秒延迟`);
   meta.textContent = details.join(' · ');
   meta.hidden = !details.length;
@@ -4423,7 +4807,7 @@ async function openInputPreview() {
     previewVideo.play().catch(() => {});
     scheduleInputPreviewPoll();
   } catch (error) {
-    renderInputPreview({ state: 'failed', message: error.message, sourceLabel: '当前输入源' });
+    renderInputPreview({ state: 'failed', message: friendlyPipelineError(error.message), sourceLabel: '当前输入源' });
   }
 }
 
@@ -4709,6 +5093,7 @@ async function openPipelinePreview(id) {
   if (inputPreviewState.closing) return;
   const pipeline = (state.pipelines || []).find(item => item.id === id);
   if (!pipeline) return alert('未找到分发任务');
+  await releasePipelineCardMonitor(id);
   await releaseInputPreview();
   inputPreviewState.pipelineId = id;
   const dialog = $('#inputPreviewDialog');
@@ -4728,7 +5113,7 @@ async function openPipelinePreview(id) {
     video.play().catch(() => {});
     scheduleInputPreviewPoll();
   } catch (error) {
-    renderInputPreview({ state: 'failed', message: error.message, sourceLabel: describePipelineInput(pipeline) });
+    renderInputPreview({ state: 'failed', message: friendlyPipelineError(error.message), sourceLabel: describePipelineInput(pipeline) });
   }
 }
 
@@ -4893,6 +5278,11 @@ function editPipeline(id) {
   renderNoSignalImage();
   syncLiveDelayControls(form);
   syncEncodingControls(form);
+  if ($('#pipelineValidationSummary')) {
+    $('#pipelineValidationSummary').hidden = true;
+    $('#pipelineValidationSummary').textContent = '';
+  }
+  switchPipelineSection('basic', { focus: false });
   updatePipelineEditUi();
   show('distribution');
   setPipelineFormVisible(true);
@@ -5202,7 +5592,7 @@ $('#retryInputPreviewBtn').addEventListener('click', async () => {
   else openInputPreview();
 });
 $('#inputPreviewDialog').addEventListener('close', () => {
-  releaseInputPreview();
+  releaseInputPreview().finally(pumpPipelineCardMonitors);
 });
 $('#previewWatermarkBtn').addEventListener('click', () => openOverlayLayoutEditor('watermark'));
 $('#previewSlideshowBtn').addEventListener('click', () => openOverlayLayoutEditor('slideshow'));
@@ -5235,6 +5625,7 @@ $('#pipelineForm').elements.videoEncoder.addEventListener('change', () => {
   syncLiveDelayControls($('#pipelineForm'));
   syncEncodingControls($('#pipelineForm'));
 });
+$('#pipelineForm').elements.rateControl.addEventListener('change', () => syncEncodingControls($('#pipelineForm')));
 $('#pipelineForm').elements.mode.addEventListener('change', () => syncEncodingControls($('#pipelineForm')));
 $('#pipelineForm').elements.url.addEventListener('input', () => {
   syncLiveDelayControls($('#pipelineForm'));
@@ -5254,6 +5645,17 @@ $('#pipelineForm').elements.delayEnabled.addEventListener('change', () => {
 for (const name of ['delaySeconds', 'bitrateKbps', 'audioBitrateKbps']) {
   $('#pipelineForm').elements[name].addEventListener('input', () => syncLiveDelayControls($('#pipelineForm')));
 }
+$$('[data-pipeline-section]').forEach(button => button.addEventListener('click', () => {
+  switchPipelineSection(button.dataset.pipelineSection);
+}));
+$('#pipelinePreviousSectionBtn').addEventListener('click', () => {
+  const index = PIPELINE_SECTION_ORDER.indexOf(activePipelineSection);
+  switchPipelineSection(PIPELINE_SECTION_ORDER[Math.max(0, index - 1)]);
+});
+$('#pipelineNextSectionBtn').addEventListener('click', () => {
+  const index = PIPELINE_SECTION_ORDER.indexOf(activePipelineSection);
+  switchPipelineSection(PIPELINE_SECTION_ORDER[Math.min(PIPELINE_SECTION_ORDER.length - 1, index + 1)]);
+});
 $('#drainLiveDelayBtn').addEventListener('click', () => {
   const pipelineId = pendingLiveDelayStopPipelineId;
   if (pipelineId) requestPipelineStop(pipelineId, 'drain');
@@ -5380,12 +5782,18 @@ document.addEventListener('keydown', event => {
     $('#userMenuButton').focus();
   }
 });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) releaseAllPipelineCardMonitors();
+  else syncPipelineCardMonitors();
+});
 
 window.addEventListener('pagehide', () => {
   const id = detachInputPreview();
   const overlayId = detachOverlayLayoutPreview();
   const studioIds = detachStudioSwitcher();
-  for (const previewId of [id, overlayId, ...studioIds].filter(Boolean)) {
+  const cardIds = Array.from(pipelineCardMonitorState.sessions.values()).map(session => session.id).filter(Boolean);
+  pipelineCardMonitorState.sessions.clear();
+  for (const previewId of [id, overlayId, ...studioIds, ...cardIds].filter(Boolean)) {
     fetch(`/api/previews/${encodeURIComponent(previewId)}/stop`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

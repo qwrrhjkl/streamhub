@@ -97,7 +97,7 @@ test('explicit copy rejects RTMP overlays and capture inputs', () => {
   );
 });
 
-test('auto rejects non-RTMP and non-capture inputs without a CPU fallback', () => {
+test('auto accepts local media and rejects unsupported network inputs', () => {
   const conflictingSource = {
     type: 'pull',
     inputUrl: 'srt://origin.example.com:9000',
@@ -111,10 +111,7 @@ test('auto rejects non-RTMP and non-capture inputs without a CPU fallback', () =
     /auto.*RTMP.*capture/i,
   );
   assert.throws(() => resolveEncodingPlan(conflictingSource), /auto.*RTMP.*capture/i);
-  assert.throws(
-    () => resolveEncodingPlan({ type: 'file', url: 'rtmp://origin.example.com/live/main' }),
-    /auto.*RTMP.*capture/i,
-  );
+  assert.equal(resolveEncodingPlan({ type: 'file', path: '/tmp/program.mp4' }).videoEncoder, 'h264_nvenc');
   assert.throws(
     () => resolveEncodingPlan(
       { type: 'pull', url: 'rtmp://origin.example.com/live/main' },
@@ -150,6 +147,18 @@ test('auto rejects non-RTMP and non-capture inputs without a CPU fallback', () =
     ),
     /audioEncoder.*non-empty string/i,
   );
+});
+
+test('explicit QSV and AMF plans retain their hardware encoding modes', () => {
+  const source = { type: 'file', path: '/tmp/program.mp4' };
+  assert.deepEqual(resolveEncodingPlan(source, { live: { videoEncoder: 'h264_qsv' } }), {
+    requestedVideoEncoder: 'h264_qsv', videoEncoder: 'h264_qsv', audioEncoder: 'aac',
+    encodingMode: 'qsv', requiresNvenc: false, filtersAllowed: true,
+  });
+  assert.deepEqual(resolveEncodingPlan(source, { live: { videoEncoder: 'h264_amf' } }), {
+    requestedVideoEncoder: 'h264_amf', videoEncoder: 'h264_amf', audioEncoder: 'aac',
+    encodingMode: 'amf', requiresNvenc: false, filtersAllowed: true,
+  });
 });
 
 test('explicit libx264 stays on CPU and explicit h264_nvenc stays on NVENC', () => {

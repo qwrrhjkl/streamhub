@@ -204,13 +204,41 @@ test('video encoder control defaults to auto and exposes an accessible effective
   assert.ok(encoder, 'video encoder select should exist');
 
   const options = [...encoder[0].matchAll(/<option value="([^"]+)"([^>]*)>([^<]+)<\/option>/g)];
-  assert.deepEqual(options.map(option => option[1]), ['auto', 'copy', 'h264_nvenc', 'libx264']);
+  assert.deepEqual(options.map(option => option[1]), ['auto', 'copy', 'libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf']);
   assert.match(options[0][2], /selected/);
-  assert.match(options[3][3], /CPU.*测试/);
+  assert.match(options[2][3], /x264.*软件编码/);
   assert.match(pipelineForm, /<p id="encodingModeStatus" class="field-status(?: full)?" role="status" aria-live="polite" tabindex="-1"><\/p>/);
   for (const name of ['videoEncoder', 'bitrateKbps', 'outputResolution', 'fps', 'keyframeSec', 'preset', 'profile']) {
     assert.match(controlMarkup(name).markup, /aria-describedby="encodingModeStatus"/);
   }
+});
+
+test('pipeline editor is modular and card monitoring is bounded and visibility-aware', () => {
+  const pipelineForm = formMarkup('pipelineForm');
+  for (const section of ['basic', 'input', 'output', 'video', 'audio', 'processing', 'advanced']) {
+    assert.match(pipelineForm, new RegExp(`data-pipeline-section="${section}"`));
+    assert.match(pipelineForm, new RegExp(`data-pipeline-panel="${section}"`));
+  }
+  for (const name of [
+    'rateControl', 'maxBitrateKbps', 'bufferSizeKbps', 'crf', 'level', 'tune', 'multipass',
+    'bFrames', 'referenceFrames', 'lookahead', 'adaptiveQuantization', 'aqStrength',
+    'sceneDetection', 'pixelFormat', 'colorRange', 'repeatHeaders', 'customOptions',
+  ]) {
+    assert.ok(controlMarkup(name) || pipelineForm.includes(`name="${name}"`), `${name} should exist`);
+  }
+  assert.match(app, /maxActive:\s*3/);
+  assert.match(appFunctionSource('syncPipelineCardMonitors'), /IntersectionObserver/);
+  assert.match(appFunctionSource('startPipelineCardMonitor'), /monitor:\s*true/);
+  assert.match(appFunctionSource('renderPipelineCardMonitor'), /480p \/ 2 fps 低负载监看/);
+  assert.match(appFunctionSource('pipelineCardMonitorMessage'), /暂无输入源/);
+  assert.match(css, /@media\(max-width:900px\)[\s\S]*\.pipeline-editor-nav\{[^}]*flex-direction:row/);
+});
+
+test('pipeline errors replace raw FFmpeg diagnostics with concise operator guidance', () => {
+  const { friendlyPipelineError } = appFunctions(['friendlyPipelineError']);
+  assert.match(friendlyPipelineError('Error setting option rc to value 22. Invalid argument'), /码率控制参数无效/);
+  assert.match(friendlyPipelineError('cuInit failed: CUDA_ERROR_NO_DEVICE. Invalid argument'), /GPU 可见性/);
+  assert.doesNotMatch(friendlyPipelineError('ffmpeg version 7 configuration: --enable-nvenc'), /configuration:/);
 });
 
 test('pipeline input validation rejects stale, disabled, and incomplete inputs independently of encoding', () => {

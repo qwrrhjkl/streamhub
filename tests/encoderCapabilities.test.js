@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { checkNvencAvailability } = require('../server/lib/encoderCapabilities');
+const { checkNvencAvailability, detectEncoderCapabilities } = require('../server/lib/encoderCapabilities');
 
 test('NVENC capability probe uses a hardware-supported 256 pixel frame', () => {
   let invocation;
@@ -67,4 +67,34 @@ test('NVENC capability probe handles a thrown runner error deterministically', (
   assert.equal(result.ok, false);
   assert.equal(result.diagnostic.endsWith('x'.repeat(500)), true);
   assert.equal(result.diagnostic.length, 500);
+});
+
+test('capability detection distinguishes compiled, unavailable, and working encoders', () => {
+  const invocations = [];
+  const runner = (command, args) => {
+    invocations.push(args);
+    if (args.includes('-encoders')) {
+      return { status: 0, stdout: ' V..... libx264\n V....D h264_nvenc\n', stderr: '' };
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const capabilities = detectEncoderCapabilities(runner);
+  const byId = Object.fromEntries(capabilities.map(item => [item.id, item]));
+  assert.equal(byId.libx264.available, true);
+  assert.equal(byId.h264_nvenc.available, true);
+  assert.equal(byId.h264_qsv.available, false);
+  assert.equal(byId.h264_amf.available, false);
+  assert.match(byId.h264_qsv.reason, /未编译/);
+  assert.equal(invocations.filter(args => args.includes('-frames:v')).length, 1);
+});
+
+test('capability detection exposes concise hardware guidance instead of raw FFmpeg diagnostics', () => {
+  const runner = (command, args) => {
+    if (args.includes('-encoders')) return { status: 0, stdout: ' V..... libx264\n V....D h264_nvenc\n', stderr: '' };
+    return { status: 1, stdout: '', stderr: 'cuInit failed: CUDA_ERROR_NO_DEVICE with internal stack details' };
+  };
+  const nvenc = detectEncoderCapabilities(runner).find(item => item.id === 'h264_nvenc');
+  assert.equal(nvenc.available, false);
+  assert.equal(nvenc.reason, 'NVIDIA 驱动未就绪或 GPU 不可见');
+  assert.doesNotMatch(nvenc.reason, /CUDA_ERROR|stack/i);
 });

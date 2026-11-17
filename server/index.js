@@ -16,6 +16,7 @@ const { MediaAssetManager } = require('./lib/mediaAssets');
 const { StudioManager } = require('./lib/studioManager');
 const { createLogManager } = require('./lib/logManager');
 const { createPipelineReport } = require('./lib/pipelineReport');
+const { detectEncoderCapabilities } = require('./lib/encoderCapabilities');
 const {
   createAuthManager,
   tokenFromCookie,
@@ -269,20 +270,14 @@ async function handleApi(req, res, url, {
   }
 
   if (url.pathname === '/api/encoding-capabilities' && req.method === 'GET') {
-    if (process.env.STREAMHUB_NVENC_ENABLED === '0') {
-      return json(res, 200, {
-        nvencAvailable: false,
-        message: '当前主机未检测到 NVIDIA GPU，已禁用 h264_nvenc；可使用 libx264 CPU 编码。',
-      });
-    }
-    const result = typeof manager.checkNvenc === 'function'
-      ? manager.checkNvenc()
-      : { ok: false, diagnostic: 'NVENC capability check is unavailable' };
+    const encoders = detectEncoderCapabilities(undefined, manager.mediaBinaries, {
+      nvencEnabled: process.env.STREAMHUB_NVENC_ENABLED !== '0',
+    });
+    const nvenc = encoders.find(item => item.id === 'h264_nvenc');
     return json(res, 200, {
-      nvencAvailable: Boolean(result && result.ok),
-      message: result && result.ok
-        ? ''
-        : String(result && result.diagnostic || 'NVIDIA NVENC 不可用'),
+      encoders,
+      nvencAvailable: Boolean(nvenc && nvenc.available),
+      message: nvenc && nvenc.available ? '' : String(nvenc && nvenc.reason || 'NVIDIA NVENC 不可用'),
     });
   }
 

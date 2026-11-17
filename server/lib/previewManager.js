@@ -8,7 +8,7 @@ const {
   resolvePipelineSource,
   sourceFingerprint,
 } = require('./ffmpegBuilder');
-const { createFFmpegProgressAccumulator, parseFFmpegStatsLine } = require('./metrics');
+const { createFFmpegProgressAccumulator, parseFFmpegStatsLine, parseFFmpegStreamInfoLine } = require('./metrics');
 const { resolveMediaBinaries } = require('./mediaBinaries');
 const { ensureDir } = require('./store');
 const { createRotatingLogWriter } = require('./rotatingLogWriter');
@@ -32,6 +32,7 @@ function normalizePreviewOptions(request = {}) {
   return {
     format,
     audio: format === 'mp4' && request.audio === true,
+    monitor: format === 'mpjpeg' && request.monitor === true,
   };
 }
 
@@ -42,6 +43,9 @@ function diagnosticFor(line) {
   }
   if (/permission denied|operation not permitted/i.test(text)) {
     return { state: 'failed', message: '没有访问输入设备的权限' };
+  }
+  if (/device or resource busy|cannot open device|already in use/i.test(text)) {
+    return { state: 'failed', message: '输入设备正在被其他任务占用' };
   }
   if (/error|failed|refused|timeout|timed out|could not|invalid data found/i.test(text)) {
     return { state: 'failed', message: '预览进程启动失败，请检查输入源、网络或设备状态' };
@@ -117,8 +121,12 @@ class PreviewManager {
       state: session.state,
       width: session.width || 0,
       height: session.height || 0,
-      fps: session.fps || 0,
-      latencyMs: 1000,
+      fps: session.inputFps || session.fps || 0,
+      bitrateKbps: session.inputBitrateKbps || session.previewBitrateKbps || 0,
+      bitrateSource: session.inputBitrateKbps ? 'input' : session.previewBitrateKbps ? 'preview' : '',
+      videoCodec: session.videoCodec || '',
+      audioCodec: session.audioCodec || '',
+      latencyMs: session.monitor ? 1500 : 500,
       message: session.message || '',
     };
   }
@@ -167,7 +175,23 @@ class PreviewManager {
     const metadata = videoMetadata(line);
     if (metadata) Object.assign(session, metadata);
 
-    if (parseFFmpegStatsLine(line)) {
+    const streamInfo = parseFFmpegStreamInfoLine(line);
+    if (streamInfo && streamInfo.type === 'video' && !session.outputDescriptionStarted) {
+      if (streamInfo.fps) session.inputFps = streamInfo.fps;
+      if (streamInfo.bitrateKbps) session.inputBitrateKbps = streamInfo.bitrateKbps;
+      const codec = String(line || '').match(/\bVideo:\s*([^,\s]+)/i);
+      if (codec) session.videoCodec = codec[1];
+    }
+    if (streamInfo && streamInfo.type === 'audio' && !session.outputDescriptionStarted) {
+      const codec = String(line || '').match(/\bAudio:\s*([^,\s]+)/i);
+      if (codec) session.audioCodec = codec[1];
+    }
+    if (/^Output #\d+/i.test(String(line || '').trim())) session.outputDescriptionStarted = true;
+
+    const progress = parseFFmpegStatsLine(line);
+    if (progress) {
+      if (progress.fps) session.fps = progress.fps;
+      if (progress.bitrateKbps) session.previewBitrateKbps = progress.bitrateKbps;
       session.state = 'receiving';
       session.message = '';
       this.appendLog(session, 'RECEIVING');
@@ -219,7 +243,7 @@ class PreviewManager {
     const sourceFingerprintValue = programPreview
       ? `program:${pipelineId}:${String(programPreview.epoch || '')}`
       : sourceFingerprint(source);
-    const fingerprint = `${sourceFingerprintValue}:preview:${previewOptions.format}:${previewOptions.audio ? 'audio' : 'no-audio'}`;
+    const fingerprint = `${sourceFingerprintValue}:preview:${previewOptions.format}:${previewOptions.audio ? 'audio' : 'no-audio'}:${previewOptions.monitor ? 'monitor' : 'full'}`;
     const existing = Array.from(this.sessions.values()).find(session => session.fingerprint === fingerprint);
     if (existing) {
       existing.releaseRequested = false;
@@ -257,6 +281,7 @@ class PreviewManager {
       fingerprint,
       format: previewOptions.format,
       audio: previewOptions.audio,
+      monitor: previewOptions.monitor,
       child,
       logFile: '',
       logClosed: false,
@@ -265,6 +290,12 @@ class PreviewManager {
       width: 0,
       height: 0,
       fps: 0,
+      inputFps: 0,
+      inputBitrateKbps: 0,
+      previewBitrateKbps: 0,
+      videoCodec: '',
+      audioCodec: '',
+      outputDescriptionStarted: false,
       clients: new Set(),
       idleTimer: null,
       releaseRequested: false,

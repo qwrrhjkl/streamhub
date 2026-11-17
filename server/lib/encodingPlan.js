@@ -110,6 +110,14 @@ function resolveEncodingPlan(source = {}, settings = {}, options = {}) {
     return createPlan('h264_nvenc', 'h264_nvenc', configuredAudioEncoder, 'nvenc');
   }
 
+  if (requestedVideoEncoder === 'h264_qsv') {
+    return createPlan('h264_qsv', 'h264_qsv', configuredAudioEncoder, 'qsv');
+  }
+
+  if (requestedVideoEncoder === 'h264_amf') {
+    return createPlan('h264_amf', 'h264_amf', configuredAudioEncoder, 'amf');
+  }
+
   if (requestedVideoEncoder === 'libx264') {
     return createPlan('libx264', 'libx264', configuredAudioEncoder, 'cpu');
   }

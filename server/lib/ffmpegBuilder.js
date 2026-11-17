@@ -5,10 +5,27 @@ const DEFAULT_SETTINGS = {
   live: {
     videoEncoder: 'auto',
     audioEncoder: 'aac',
+    rateControl: 'cbr',
     bitrateKbps: 8000,
+    maxBitrateKbps: 8000,
+    bufferSizeKbps: 16000,
+    crf: 23,
     keyframeSec: 2,
     preset: 'veryfast',
+    tune: 'zerolatency',
+    multipass: 'disabled',
     profile: 'high',
+    level: 'auto',
+    bFrames: 2,
+    referenceFrames: 3,
+    lookahead: false,
+    adaptiveQuantization: true,
+    aqStrength: 8,
+    sceneDetection: true,
+    pixelFormat: 'yuv420p',
+    colorRange: 'tv',
+    repeatHeaders: true,
+    customOptions: '',
     delayEnabled: false,
     delaySeconds: 20,
   },
@@ -480,20 +497,170 @@ function audioArgs(settings, encodingPlan) {
   return ['-c:a', encodingPlan.audioEncoder, '-ar', String(audio.sampleRate || '48000'), '-ac', channels, '-b:a', `${bitrate}k`];
 }
 
+function boundedNumber(value, fallback, label, min, max, integer = false) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max || (integer && !Number.isInteger(parsed))) {
+    throw settingsValidationError(`${label}必须在 ${min} 至 ${max} 之间`);
+  }
+  return parsed;
+}
+
+function normalizeChoice(value, fallback, allowed, label) {
+  const normalized = String(value ?? fallback).trim().toLowerCase();
+  if (!allowed.includes(normalized)) {
+    throw settingsValidationError(`${label}不受支持：${normalized || '空值'}`);
+  }
+  return normalized;
+}
+
+function parseCustomEncoderOptions(value) {
+  const input = String(value || '').trim();
+  if (!input) return [];
+  if (input.length > 2048) throw settingsValidationError('编码器自定义参数不能超过 2048 个字符');
+  const tokens = [];
+  let token = '';
+  let quote = '';
+  let escaping = false;
+  for (const character of input) {
+    if (escaping) {
+      token += character;
+      escaping = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = '';
+      else token += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (token) {
+        tokens.push(token);
+        token = '';
+      }
+      continue;
+    }
+    token += character;
+  }
+  if (escaping || quote) throw settingsValidationError('编码器自定义参数存在未闭合的引号或转义符');
+  if (token) tokens.push(token);
+  if (tokens.length > 40) throw settingsValidationError('编码器自定义参数最多允许 40 个参数项');
+
+  const forbidden = new Set([
+    '-i', '-f', '-map', '-filter_complex', '-filter:v', '-vf', '-filter:a', '-af',
+    '-c', '-c:v', '-codec', '-codec:v', '-y', '-n', '-progress', '-report', '-loglevel',
+    '-nostdin', '-stdin', '-passlogfile',
+  ]);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const option = tokens[index];
+    if (!option.startsWith('-')) {
+      throw settingsValidationError(`编码器自定义参数“${option}”缺少选项名称`);
+    }
+    const key = option.split('=')[0].toLowerCase();
+    if (forbidden.has(key)) {
+      throw settingsValidationError(`编码器自定义参数不能覆盖结构性选项 ${key}`);
+    }
+    if (!option.includes('=') && tokens[index + 1] && !tokens[index + 1].startsWith('-')) index += 1;
+  }
+  return tokens;
+}
+
+function encoderPreset(encoder, value) {
+  const requested = String(value || '').trim().toLowerCase();
+  if (encoder === 'h264_nvenc') {
+    return ['default', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'].includes(requested) ? requested : 'p4';
+  }
+  if (encoder === 'h264_amf') {
+    if (['speed', 'balanced', 'quality'].includes(requested)) return requested;
+    return 'balanced';
+  }
+  if (encoder === 'h264_qsv') {
+    return ['veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'].includes(requested)
+      ? requested
+      : 'medium';
+  }
+  return ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'].includes(requested)
+    ? requested
+    : 'veryfast';
+}
+
+function encoderTune(encoder, value) {
+  const requested = String(value || '').trim().toLowerCase();
+  if (encoder === 'h264_nvenc') {
+    if (requested === 'zerolatency' || requested === 'none' || requested === '') return 'll';
+    return normalizeChoice(requested, 'll', ['hq', 'll', 'ull', 'lossless'], 'NVENC Tune');
+  }
+  return requested;
+}
+
+function rateControlArgs(encoder, live) {
+  const rateControl = normalizeChoice(live.rateControl, 'cbr', ['cbr', 'vbr', 'abr', 'crf'], '码率控制模式');
+  const target = boundedNumber(live.bitrateKbps, 8000, '目标码率', 100, 200000, true);
+  const maximum = boundedNumber(live.maxBitrateKbps, Math.max(target, 8000), '峰值码率', 100, 400000, true);
+  const buffer = boundedNumber(live.bufferSizeKbps, Math.max(target * 2, 1000), '缓冲区', 100, 800000, true);
+  const crf = boundedNumber(live.crf, 23, '质量值', 0, 51);
+  if (maximum < target && ['cbr', 'vbr'].includes(rateControl)) {
+    throw settingsValidationError('峰值码率不能低于目标码率');
+  }
+
+  if (encoder === 'libx264') {
+    if (rateControl === 'crf') return ['-crf', String(crf), '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+    if (rateControl === 'abr') return ['-b:v', `${target}k`, '-bufsize', `${buffer}k`];
+    if (rateControl === 'vbr') return ['-b:v', `${target}k`, '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+    return ['-b:v', `${target}k`, '-minrate', `${target}k`, '-maxrate', `${target}k`, '-bufsize', `${buffer}k`];
+  }
+  if (encoder === 'h264_nvenc') {
+    if (rateControl === 'abr') throw settingsValidationError('NVENC 不支持 ABR，请选择 CBR、VBR 或恒定质量');
+    if (rateControl === 'crf') return ['-rc', 'vbr', '-cq', String(crf), '-b:v', '0', '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+    if (rateControl === 'vbr') return ['-rc', 'vbr', '-b:v', `${target}k`, '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+    return ['-rc', 'cbr', '-b:v', `${target}k`, '-minrate', `${target}k`, '-maxrate', `${target}k`, '-bufsize', `${buffer}k`];
+  }
+  if (encoder === 'h264_qsv') {
+    if (rateControl === 'crf') return ['-global_quality', String(crf)];
+    if (rateControl === 'abr') return ['-b:v', `${target}k`, '-avbr_accuracy', '1', '-avbr_convergence', '1'];
+    if (rateControl === 'vbr') return ['-b:v', `${target}k`, '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+    return ['-b:v', `${target}k`, '-minrate', `${target}k`, '-maxrate', `${target}k`, '-bufsize', `${buffer}k`];
+  }
+  if (rateControl === 'crf') return ['-rc', 'cqp', '-qp_i', String(crf), '-qp_p', String(crf), '-qp_b', String(crf)];
+  if (rateControl === 'abr') return ['-rc', 'vbr_latency', '-b:v', `${target}k`, '-bufsize', `${buffer}k`];
+  if (rateControl === 'vbr') return ['-rc', 'vbr_peak', '-b:v', `${target}k`, '-maxrate', `${maximum}k`, '-bufsize', `${buffer}k`];
+  return ['-rc', 'cbr', '-b:v', `${target}k`, '-minrate', `${target}k`, '-maxrate', `${target}k`, '-bufsize', `${buffer}k`];
+}
+
 function videoArgs(settings, encodingPlan, overlayActive = false) {
   const merged = mergeSettings(settings);
   const live = merged.live;
   const video = merged.video;
   if (encodingPlan.videoEncoder === 'copy') return ['-c:v', 'copy'];
   const encoder = encodingPlan.videoEncoder;
-  const bitrate = Number(live.bitrateKbps || 8000);
+  const pixelFormat = normalizeChoice(live.pixelFormat, 'yuv420p', ['yuv420p', 'nv12', 'p010le', 'yuv422p', 'yuv444p'], '像素格式');
+  const colorRange = normalizeChoice(live.colorRange, 'tv', ['tv', 'pc'], '色彩范围');
+  const profile = normalizeChoice(live.profile, 'high', ['baseline', 'main', 'high'], '编码档');
+  const level = String(live.level || 'auto').trim().toLowerCase();
+  if (level !== 'auto' && !/^[1-6](?:\.[0-2])?$/.test(level)) throw settingsValidationError(`编码 Level 不受支持：${level}`);
+  const bFrames = boundedNumber(live.bFrames, 2, 'B 帧数', 0, 4, true);
+  const referenceFrames = boundedNumber(live.referenceFrames, 3, '参考帧数', 1, 16, true);
+  const aqStrength = boundedNumber(live.aqStrength, 8, '自适应量化强度', 1, 15, true);
+  const lookahead = live.lookahead === true;
+  const adaptiveQuantization = live.adaptiveQuantization !== false;
+  const sceneDetection = live.sceneDetection !== false;
+  const repeatHeaders = live.repeatHeaders !== false;
   const args = [
-    ...(encoder === 'libx264' || encoder === 'h264_nvenc' ? ['-pix_fmt', 'yuv420p'] : []),
+    '-pix_fmt', pixelFormat,
+    '-color_range', colorRange,
     '-c:v', encoder,
-    '-b:v', `${bitrate}k`,
-    '-minrate', `${bitrate}k`,
-    '-maxrate', `${bitrate}k`,
-    '-bufsize', `${bitrate * 2}k`,
+    ...rateControlArgs(encoder, live),
+    '-profile:v', profile,
+    ...(level === 'auto' ? [] : ['-level:v', level]),
+    '-bf', String(bFrames),
+    '-refs', String(referenceFrames),
   ];
   if (video.outputResolution) args.push('-s', String(video.outputResolution));
   if (video.fps) args.push('-r', String(video.fps));
@@ -502,22 +669,46 @@ function videoArgs(settings, encodingPlan, overlayActive = false) {
     if (Number.isFinite(fps)) args.push('-g', String(Math.round(fps * Number(live.keyframeSec))));
   }
   if (encoder === 'libx264') {
+    const rateControl = normalizeChoice(live.rateControl, 'cbr', ['cbr', 'vbr', 'abr', 'crf'], '码率控制模式');
+    const x264Params = [
+      ...(rateControl === 'cbr' ? ['nal-hrd=cbr'] : []),
+      'force-cfr=1',
+      `repeat-headers=${repeatHeaders ? 1 : 0}`,
+      `aq-mode=${adaptiveQuantization ? 1 : 0}`,
+      `aq-strength=${Number((aqStrength / 8).toFixed(3))}`,
+    ];
     args.push(
-      '-preset', overlayActive ? 'superfast' : String(live.preset || 'veryfast'),
-      '-profile:v', String(live.profile || 'high'),
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1',
+      '-preset', encoderPreset(encoder, overlayActive ? 'superfast' : live.preset),
+      ...(String(live.tune || '').trim() && live.tune !== 'none' ? ['-tune', String(live.tune).trim()] : []),
+      '-rc-lookahead', lookahead ? '20' : '0',
+      '-sc_threshold', sceneDetection ? '40' : '0',
+      '-x264-params', x264Params.join(':'),
     );
   }
   if (encoder === 'h264_nvenc') {
+    const tune = encoderTune(encoder, live.tune);
     args.push(
-      '-preset', 'p4',
-      '-tune', 'll',
-      '-rc', 'cbr',
-      '-cbr', '1',
-      '-spatial_aq', '1',
-      '-zerolatency', '1',
+      '-preset', encoderPreset(encoder, live.preset),
+      '-tune', tune,
+      '-multipass', normalizeChoice(live.multipass, 'disabled', ['disabled', 'qres', 'fullres'], 'NVENC 多次编码模式'),
+      '-rc-lookahead', lookahead ? '20' : '0',
+      '-spatial-aq', adaptiveQuantization ? '1' : '0',
+      '-aq-strength', String(aqStrength),
+      '-no-scenecut', sceneDetection ? '0' : '1',
+      '-zerolatency', ['ll', 'ull'].includes(tune) ? '1' : '0',
     );
   }
+  if (encoder === 'h264_qsv') {
+    args.push('-preset', encoderPreset(encoder, live.preset));
+    if (lookahead) args.push('-look_ahead', '1', '-look_ahead_depth', '20');
+    args.push('-adaptive_i', sceneDetection ? '1' : '0');
+  }
+  if (encoder === 'h264_amf') {
+    args.push('-quality', encoderPreset(encoder, live.preset));
+    if (lookahead) args.push('-preanalysis', '1');
+  }
+  if (repeatHeaders) args.push('-bsf:v', 'dump_extra=freq=keyframe');
+  args.push(...parseCustomEncoderOptions(live.customOptions));
   return args;
 }
 
@@ -692,19 +883,20 @@ function buildSharedRelayArgs(
       : []),
     ...pullTimelineAudioArgs(source, encodingPlan),
     ...audioArgs(merged, encodingPlan),
-    ...(encodingPlan.videoEncoder === 'copy' ? [] : ['-bsf:v', 'dump_extra=freq=keyframe']),
     '-muxdelay', '0', '-muxpreload', '0',
     '-f', 'tee',
     teeChannels.map(channel => `[${teeOptions}]${escapeTeeTarget(channel.outputUrl)}`).join('|'),
   ];
 }
 
-function previewOutputArgs({ audio = false, format = 'mpjpeg' } = {}) {
+function previewOutputArgs({ audio = false, format = 'mpjpeg', monitor = false } = {}) {
   const wantsMp4 = String(format || '').toLowerCase() === 'mp4';
+  const maxWidth = monitor ? 480 : 1280;
+  const videoFilter = `${monitor ? 'fps=2,' : ''}scale=trunc(min(${maxWidth}\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease`;
   return [
     '-map', '0:v:0?',
     ...(wantsMp4 && audio ? ['-map', '0:a:0?'] : ['-an']),
-    '-vf', 'scale=trunc(min(1280\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease',
+    '-vf', videoFilter,
     ...(wantsMp4
       ? [
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
@@ -712,7 +904,7 @@ function previewOutputArgs({ audio = false, format = 'mpjpeg' } = {}) {
         ...(audio ? ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'] : ['-an']),
         '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
       ]
-      : ['-c:v', 'mjpeg', '-q:v', '5', '-f', 'mpjpeg']),
+      : ['-c:v', 'mjpeg', '-q:v', monitor ? '8' : '5', '-f', 'mpjpeg', '-boundary_tag', 'streamhub-preview']),
     'pipe:1',
   ];
 }
@@ -817,5 +1009,6 @@ module.exports = {
   buildDirectPreviewArgs,
   buildRelayPreviewArgs,
   buildTeeOutputArgs,
+  parseCustomEncoderOptions,
   resolveEncodingPlan,
 };
