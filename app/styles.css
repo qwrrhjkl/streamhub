@@ -1740,6 +1740,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app.sidebar-collapsed .sidebar{pointer-events:none;transform:translateX(-100%)}
 .console-app.sidebar-collapsed .shell{margin-left:0}
 .console-app.sidebar-collapsed .sidebar-toggle{left:12px}
+.console-app.sidebar-collapsed .console-topbar{padding-left:64px}
 .console-app.sidebar-collapsed .sidebar-toggle-collapse{display:none}
 .console-app.sidebar-collapsed .sidebar-toggle-expand{display:block}
 .console-app[data-theme="night"] .sidebar-toggle{background:#0c1d2d;border-color:rgba(130,183,224,.2);color:#9db5c9}

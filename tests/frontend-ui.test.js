@@ -878,6 +878,7 @@ test('desktop sidebar can collapse persistently without changing mobile navigati
   assert.match(applySidebar, /SIDEBAR_STORAGE_KEY/);
   assert.match(css, /\.console-app\.sidebar-collapsed \.sidebar\{[^}]*transform:translateX\(-100%\)/);
   assert.match(css, /\.console-app\.sidebar-collapsed \.shell\{margin-left:0\}/);
+  assert.match(css, /\.console-app\.sidebar-collapsed \.console-topbar\{padding-left:64px\}/);
   assert.match(css, /@media\(max-width:1100px\)\{[\s\S]*?\.sidebar-toggle\{display:none\}/);
 });
 
