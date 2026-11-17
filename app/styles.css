@@ -1636,6 +1636,8 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .pipeline-card-live-metrics small{color:var(--ui-muted);font-size:9px;white-space:nowrap}
 .console-app .pipeline-card-actions{align-items:center;display:flex;gap:5px}
 .console-app .pipeline-card-actions .icon-button{height:32px;min-height:32px;width:32px}
+.console-app .pipeline-switcher-button{background:var(--ui-signal-soft);border-color:color-mix(in srgb,var(--ui-signal) 28%,var(--ui-line));color:var(--ui-signal-dark)}
+.console-app .pipeline-switcher-button:hover{background:color-mix(in srgb,var(--ui-signal-soft) 72%,var(--ui-signal));color:var(--ui-signal-dark)}
 .console-app .pipeline-primary-control{
   border-radius:50%;
   height:34px;
@@ -1713,6 +1715,35 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   padding:22px 14px 18px;
   width:246px;
 }
+.console-app .sidebar{transition:transform .2s cubic-bezier(.22,1,.36,1)}
+.console-app .shell{transition:margin-left .2s cubic-bezier(.22,1,.36,1)}
+.console-app .sidebar-toggle{
+  align-items:center;
+  background:var(--ui-surface);
+  border-color:var(--ui-line);
+  color:var(--ui-muted);
+  display:grid;
+  height:36px;
+  left:228px;
+  min-height:36px;
+  padding:0;
+  place-items:center;
+  position:fixed;
+  top:18px;
+  transition:left .2s cubic-bezier(.22,1,.36,1),background-color .15s ease,color .15s ease;
+  width:36px;
+  z-index:14;
+}
+.console-app .sidebar-toggle:hover{background:var(--ui-signal-soft);color:var(--ui-signal-dark)}
+.console-app .sidebar-toggle svg{grid-area:1/1;height:17px;width:17px}
+.console-app .sidebar-toggle-expand{display:none}
+.console-app.sidebar-collapsed .sidebar{pointer-events:none;transform:translateX(-100%)}
+.console-app.sidebar-collapsed .shell{margin-left:0}
+.console-app.sidebar-collapsed .sidebar-toggle{left:12px}
+.console-app.sidebar-collapsed .sidebar-toggle-collapse{display:none}
+.console-app.sidebar-collapsed .sidebar-toggle-expand{display:block}
+.console-app[data-theme="night"] .sidebar-toggle{background:#0c1d2d;border-color:rgba(130,183,224,.2);color:#9db5c9}
+.console-app[data-theme="night"] .sidebar-toggle:hover{background:rgba(72,185,255,.16);color:#f2f8ff}
 .console-app .brand{
   border-bottom:1px solid rgba(151,183,211,.14);
   gap:11px;
@@ -1982,6 +2013,8 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   .console-app .topbar-telemetry>span:nth-child(3){display:none}
 }
 @media(max-width:1100px){
+  .console-app .sidebar-toggle{display:none}
+  .console-app.sidebar-collapsed .sidebar{pointer-events:auto;transform:none}
   .console-app .sidebar,.console-app[data-theme="night"] .sidebar{
     display:block;
     padding:10px 14px 8px;

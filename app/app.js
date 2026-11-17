@@ -2,6 +2,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const THEME_STORAGE_KEY = 'streamhub-console-theme';
+const SIDEBAR_STORAGE_KEY = 'streamhub-sidebar-collapsed';
 const VIEW_META = {
   dashboard: { title: '总览', kicker: 'CONTROL CENTER' },
   distribution: { title: '推流分发', kicker: 'OUTPUT ORCHESTRATION' },
@@ -171,6 +172,35 @@ function initializeTheme() {
     savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'day';
   } catch { /* use the requested daytime default */ }
   applyTheme(savedTheme);
+}
+
+let sidebarCollapsedPreference = false;
+
+function applySidebarCollapsed(collapsed, persist = false) {
+  const app = $('#consoleApp');
+  const sidebar = $('#consoleSidebar');
+  const toggle = $('#sidebarToggle');
+  if (!app || !sidebar || !toggle) return;
+  if (persist) sidebarCollapsedPreference = Boolean(collapsed);
+  const isDesktop = window.matchMedia('(min-width: 1101px)').matches;
+  const isCollapsed = isDesktop && Boolean(sidebarCollapsedPreference);
+  app.classList.toggle('sidebar-collapsed', isCollapsed);
+  sidebar.inert = isCollapsed;
+  sidebar.setAttribute('aria-hidden', String(isCollapsed));
+  toggle.setAttribute('aria-expanded', String(!isCollapsed));
+  toggle.setAttribute('aria-label', isCollapsed ? '展开左侧导航' : '收起左侧导航');
+  toggle.title = isCollapsed ? '展开左侧导航' : '收起左侧导航';
+  if (persist) {
+    try { localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsedPreference ? '1' : '0'); } catch { /* storage may be unavailable */ }
+  }
+  window.setTimeout(redrawThemeCharts, 220);
+}
+
+function initializeSidebar() {
+  try { sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1'; } catch { /* use expanded default */ }
+  applySidebarCollapsed(sidebarCollapsedPreference);
+  const desktopQuery = window.matchMedia('(min-width: 1101px)');
+  desktopQuery.addEventListener('change', () => applySidebarCollapsed(sidebarCollapsedPreference));
 }
 
 let activeParameterHelpButton = null;
@@ -3786,7 +3816,7 @@ function renderPipelineCards() {
           ${primaryAction}
           <button class="icon-button" data-action="edit-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="修改任务" aria-label="修改 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="pencil" aria-hidden="true"></i></button>
           <button class="icon-button" data-action="duplicate-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="复制任务" aria-label="复制 ${escapeHtml(p.name)}"><i data-lucide="copy" aria-hidden="true"></i></button>
-          <button class="icon-button" data-action="open-studio-switcher" data-id="${escapeHtml(p.id)}" type="button" ${switchable ? '' : 'disabled'} title="${switchable ? '打开画面切换台' : '共享转推任务运行后可打开切换台'}" aria-label="打开 ${escapeHtml(p.name)} 的画面切换台"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></button>
+          <button class="pipeline-switcher-button icon-button" data-action="open-studio-switcher" data-id="${escapeHtml(p.id)}" type="button" ${switchable ? '' : 'disabled'} title="${switchable ? '打开画面切换台' : '共享转推任务运行后可打开切换台'}" aria-label="打开 ${escapeHtml(p.name)} 的画面切换台"><i data-lucide="arrow-right-left" aria-hidden="true"></i></button>
           <button class="danger icon-button" data-action="delete-item" data-collection="pipelines" data-id="${escapeHtml(p.id)}" type="button" title="删除任务" aria-label="删除 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="trash-2" aria-hidden="true"></i></button>
         </div>
       </footer>
@@ -6056,7 +6086,11 @@ renderNoSignalImage();
 handleMonitorRangePresetChange({ load: false });
 handleMonitorDetailRangePresetChange();
 initializeTheme();
+initializeSidebar();
 initializeParameterHelp();
+$('#sidebarToggle').addEventListener('click', () => {
+  applySidebarCollapsed(!$('#consoleApp').classList.contains('sidebar-collapsed'), true);
+});
 $('#themeToggle').addEventListener('click', () => {
   applyTheme(currentTheme() === 'night' ? 'day' : 'night', true);
 });

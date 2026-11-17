@@ -867,6 +867,29 @@ test('console uses a professional appliance shell with grouped operational navig
   assert.match(appFunctionSource('renderTopbarTelemetry'), /sendBytesPerSec/);
 });
 
+test('desktop sidebar can collapse persistently without changing mobile navigation', () => {
+  assert.match(html, /id="sidebarToggle"[^>]+aria-controls="consoleSidebar"[^>]+aria-expanded="true"/);
+  assert.match(html, /id="consoleSidebar"/);
+  assert.match(html, /data-lucide="panel-left-close"/);
+  assert.match(html, /data-lucide="panel-left-open"/);
+  const applySidebar = appFunctionSource('applySidebarCollapsed');
+  assert.match(applySidebar, /classList\.toggle\('sidebar-collapsed'/);
+  assert.match(applySidebar, /sidebar\.inert = isCollapsed/);
+  assert.match(applySidebar, /SIDEBAR_STORAGE_KEY/);
+  assert.match(css, /\.console-app\.sidebar-collapsed \.sidebar\{[^}]*transform:translateX\(-100%\)/);
+  assert.match(css, /\.console-app\.sidebar-collapsed \.shell\{margin-left:0\}/);
+  assert.match(css, /@media\(max-width:1100px\)\{[\s\S]*?\.sidebar-toggle\{display:none\}/);
+});
+
+test('distribution cards expose a recognizable bidirectional switch control', () => {
+  const renderer = appFunctionSource('renderPipelineCards');
+  assert.match(renderer, /class="pipeline-switcher-button icon-button"/);
+  assert.match(renderer, /data-lucide="arrow-right-left"/);
+  assert.match(renderer, /打开画面切换台/);
+  assert.doesNotMatch(renderer, /data-lucide="sliders-horizontal"/);
+  assert.match(css, /\.pipeline-switcher-button\{[^}]*background:var\(--ui-signal-soft\)/);
+});
+
 test('local room navigation and encoding parameter help are accessible and contextual', () => {
   assert.match(html, /data-view="rooms"><i data-lucide="radio-receiver"[^>]*><\/i><span>本地直播间<\/span>/);
   assert.match(html, /id="parameterHelpPopover"[^>]+popover="auto"/);

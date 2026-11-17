@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-four-column-board">
+  <link rel="stylesheet" href="/styles.css?v=20261117-sidebar-switch-controls">
 </head>
 <body>
   <main class="login-view" id="loginView">
@@ -42,7 +42,11 @@
   </main>
 
   <div class="console-app" id="consoleApp" hidden>
-  <aside class="sidebar">
+  <button class="sidebar-toggle icon-button" id="sidebarToggle" type="button" aria-controls="consoleSidebar" aria-expanded="true" aria-label="收起左侧导航" title="收起左侧导航">
+    <i class="sidebar-toggle-collapse" data-lucide="panel-left-close" aria-hidden="true"></i>
+    <i class="sidebar-toggle-expand" data-lucide="panel-left-open" aria-hidden="true"></i>
+  </button>
+  <aside class="sidebar" id="consoleSidebar">
     <div class="brand">
       <img class="brand-mark" src="/assets/streamhub-logo.png" alt="StreamHub">
       <div>
@@ -817,6 +821,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-six-card-monitors"></script>
+  <script src="/app.js?v=20261117-sidebar-switch-controls"></script>
 </body>
 </html>
