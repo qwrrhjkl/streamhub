@@ -4967,10 +4967,12 @@ async function openInputPreview() {
   const form = $('#pipelineForm');
   const validationError = validatePipelineInput(new FormData(form));
   if (validationError) return showPipelineValidationError(validationError);
+  const cardMonitorPipelineId = editingPipelineId || '';
   const dialog = $('#inputPreviewDialog');
   renderInputPreview({ state: 'connecting', sourceLabel: '当前输入源', latencyMs: 1000 });
   if (!dialog.open) dialog.showModal();
   try {
+    if (cardMonitorPipelineId) await releasePipelineCardMonitor(cardMonitorPipelineId);
     const formData = new FormData(form);
     const inputType = formData.get('inputType');
     if (inputType === 'file') {

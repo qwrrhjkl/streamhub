@@ -1434,7 +1434,10 @@ test('distribution input controls provide an accessible preview dialog', () => {
 
 test('input preview reuses the live form payload and releases its stream on close', () => {
   assert.match(app, /let inputPreviewState = \{ id: '', pipelineId: '', pollTimer: null, closing: false \}/);
-  assert.match(app, /function buildPreviewRequest\(form\)\s*\{\s*return buildPipelineInput\(form\);\s*\}/);
+  const buildPreviewRequest = appFunctionSource('buildPreviewRequest');
+  assert.match(buildPreviewRequest, /const request = buildPipelineInput\(form\)/);
+  assert.match(buildPreviewRequest, /input\.type === 'file' && input\.mediaId/);
+  assert.match(buildPreviewRequest, /return request/);
   assert.match(app, /async function openInputPreview\(/);
   assert.match(app, /await api\('\/api\/previews', \{[\s\S]*method: 'POST'/);
   assert.match(app, /\/api\/previews\/\$\{encodeURIComponent\(preview\.id\)\}\/stream/);
@@ -1443,6 +1446,18 @@ test('input preview reuses the live form payload and releases its stream on clos
   assert.match(app, /\/api\/previews\/\$\{encodeURIComponent\(id\)\}\/stop/);
   assert.match(app, /inputPreviewDialog'\)\.addEventListener\('close'/);
   assert.match(app, /window\.addEventListener\('pagehide'/);
+});
+
+test('form input preview releases the edited task card monitor before opening capture hardware', () => {
+  const source = appFunctionSource('openInputPreview');
+  assert.match(source, /const cardMonitorPipelineId = editingPipelineId \|\| ''/);
+  assert.match(source, /await releasePipelineCardMonitor\(cardMonitorPipelineId\)/);
+  assert.ok(
+    source.indexOf('await releasePipelineCardMonitor(cardMonitorPipelineId)')
+      < source.indexOf("await api('/api/previews?format=mp4'"),
+    'card monitor must release DeckLink before the full preview starts',
+  );
+  assert.match(app, /inputPreviewDialog'\)\.addEventListener\('close',[\s\S]*releaseInputPreview\(\)\.finally\(pumpPipelineCardMonitors\)/);
 });
 
 test('fallback pipelines show a Chinese active status and remain non-editable', () => {
