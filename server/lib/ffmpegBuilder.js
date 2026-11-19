@@ -323,12 +323,16 @@ function resolvePipelineSource(pipeline, state = {}) {
   }
 
   if (input && input.type === 'file') {
-    if (!input.path && !input.url) throw new Error('本地视频文件需要填写路径');
+    const media = input.mediaId
+      ? (state.mediaAssets || []).find(item => item.id === input.mediaId)
+      : null;
+    const filePath = input.path || (media && media.path) || input.url || '';
+    if (!filePath) throw new Error('本地视频文件需要选择有效素材');
     const fileSource = {
       id: 'inline-file',
-      name: input.name || '本地视频文件',
+      name: input.name || (media && media.name) || '本地视频文件',
       type: 'file',
-      path: input.path || input.url,
+      path: filePath,
       loop: input.loop !== false,
       sharedRelay: true,
     };

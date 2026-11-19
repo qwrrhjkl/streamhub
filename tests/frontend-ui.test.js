@@ -106,6 +106,7 @@ test('management HTTP 401 enters the shared unauthorized path but login failures
 test('entering the console toggles both views, renders the username, and loads once', async () => {
   const nodes = {
     '#loginView': { hidden: false },
+    '#authLoadingView': { hidden: false },
     '#consoleApp': { hidden: true },
     '#currentUsername': { textContent: '' },
     '#userMenu': { hidden: false },
@@ -126,6 +127,7 @@ test('entering the console toggles both views, renders the username, and loads o
   assert.equal(authState.authenticated, true);
   assert.equal(authState.username, 'admin');
   assert.equal(nodes['#loginView'].hidden, true);
+  assert.equal(nodes['#authLoadingView'].hidden, true);
   assert.equal(nodes['#consoleApp'].hidden, false);
   assert.equal(nodes['#currentUsername'].textContent, 'admin');
   assert.equal(loadCalls, 1);
@@ -135,6 +137,7 @@ test('entering the console toggles both views, renders the username, and loads o
 test('failed initial console loading returns to the signed-out state before polling starts', async () => {
   const nodes = {
     '#loginView': { hidden: false },
+    '#authLoadingView': { hidden: false },
     '#consoleApp': { hidden: true },
     '#currentUsername': { textContent: '' },
     '#userMenu': { hidden: false },
@@ -1659,14 +1662,15 @@ test('hardware resources place disks and active networks before GPUs', () => {
   });
 
   assert.deepEqual(Array.from(resources, resource => resource.id), [
-    'cpu', 'memory', 'disk-259-2', 'network-eno1', 'gpu-0',
+    'cpu', 'memory', 'disk-259-2', 'network-eno1', 'gpu-0', 'gpu-0-encoder',
   ]);
   assert.deepEqual(Array.from(resources, resource => resource.type), [
-    'cpu', 'memory', 'disk', 'network', 'gpu',
+    'cpu', 'memory', 'disk', 'network', 'gpu', 'gpu-encoder',
   ]);
   assert.equal(resources[2].label, '磁盘 0');
   assert.equal(resources[3].label, '网卡 eno1');
   assert.equal(resources[3].chartMode, 'throughput');
+  assert.equal(resources[5].label, 'GPU 0 编码');
 });
 
 test('hardware resource fallbacks remain selectable when Linux metrics are unavailable', () => {
@@ -1680,7 +1684,7 @@ test('hardware resource fallbacks remain selectable when Linux metrics are unava
   });
 
   assert.deepEqual(Array.from(resources, resource => resource.id), [
-    'cpu', 'memory', 'disk-unavailable', 'network-unavailable', 'gpu-unavailable',
+    'cpu', 'memory', 'disk-unavailable', 'network-unavailable', 'gpu-unavailable', 'gpu-encoder-unavailable',
   ]);
 });
 

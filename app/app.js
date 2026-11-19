@@ -422,6 +422,16 @@ let monitorDetailState = {
   loading: false,
 };
 let inputPreviewState = { id: '', pipelineId: '', pollTimer: null, closing: false };
+const inputPreviewAudioMeterState = {
+  context: null,
+  source: null,
+  splitter: null,
+  analysers: [],
+  output: null,
+  frame: 0,
+  video: null,
+  token: 0,
+};
 let overlayLayoutState = {
   kind: '',
   selectedIndex: 0,
@@ -483,6 +493,7 @@ function setUserMenuOpen(open) {
 
 function detachInputPreview() {
   const id = inputPreviewState.id;
+  stopInputPreviewAudioMeter();
   inputPreviewState.id = '';
   inputPreviewState.pipelineId = '';
   inputPreviewState.closing = false;
@@ -506,6 +517,7 @@ async function enterConsole(username) {
   $('#currentUsername').textContent = authState.username;
   $('#userMenu').hidden = true;
   $('#userMenuButton').setAttribute('aria-expanded', 'false');
+  $('#authLoadingView').hidden = true;
   $('#loginView').hidden = true;
   $('#consoleApp').hidden = false;
   try {
@@ -538,6 +550,7 @@ function leaveConsole() {
   setUserMenuOpen(false);
   $('#currentUsername').textContent = '';
   $('#consoleApp').hidden = true;
+  $('#authLoadingView').hidden = true;
   $('#loginView').hidden = false;
   $('#loginPassword').value = '';
   $('#loginUsername').focus();
@@ -859,6 +872,22 @@ function systemResources(snapshot = {}) {
     data: device,
     value: device.usagePercent,
   }));
+  devices.forEach(device => {
+    const encoderAvailable = Number.isFinite(device.encoderUsagePercent);
+    resources.push({
+      id: `${device.id}-encoder`,
+      type: 'gpu-encoder',
+      label: `GPU ${device.index} 编码`,
+      accent: '#c07a22',
+      chartMode: 'percent',
+      data: {
+        available: encoderAvailable,
+        message: encoderAvailable ? '' : '当前 NVIDIA 驱动未提供编码器利用率',
+        name: device.name,
+      },
+      value: encoderAvailable ? device.encoderUsagePercent : null,
+    });
+  });
   if (!devices.length) {
     resources.push({
       id: 'gpu-unavailable',
@@ -867,6 +896,15 @@ function systemResources(snapshot = {}) {
       accent: '#168b68',
       chartMode: 'percent',
       data: { available: false, message: gpu.message || '未检测到可用的 NVIDIA GPU' },
+      value: null,
+    });
+    resources.push({
+      id: 'gpu-encoder-unavailable',
+      type: 'gpu-encoder',
+      label: 'GPU 编码',
+      accent: '#c07a22',
+      chartMode: 'percent',
+      data: { available: false, message: '未检测到可读取编码器利用率的 NVIDIA GPU' },
       value: null,
     });
   }
@@ -972,6 +1010,7 @@ function formatSystemResourceSummary(resource) {
   if (resource.type === 'network') {
     return `收 ${formatSystemNetworkRate(data.receiveBytesPerSec)}  发 ${formatSystemNetworkRate(data.sendBytesPerSec)}`;
   }
+  if (resource.type === 'gpu-encoder') return formatSystemPercent(resource.value, '编码器利用率不可用');
   const usage = formatSystemPercent(resource.value, '利用率不可用');
   const temperature = Number.isFinite(data.temperatureC) ? `  ${Math.round(data.temperatureC)} °C` : '';
   return `${usage}${temperature}`;
@@ -1021,6 +1060,9 @@ function systemDetailRows(resource) {
       ['MAC 地址', data.mac || '--'],
     ];
   }
+  if (resource.type === 'gpu-encoder') {
+    return [['编码引擎利用率', formatSystemPercent(resource.value, '不可用')]];
+  }
 
   const rows = [
     ['利用率', formatSystemPercent(resource.value, '不可用')],
@@ -1029,7 +1071,6 @@ function systemDetailRows(resource) {
     rows.push(['显存', `${formatSystemMib(data.memoryUsedMib)} / ${formatSystemMib(data.memoryTotalMib)}`]);
   }
   if (Number.isFinite(data.temperatureC)) rows.push(['温度', `${Math.round(data.temperatureC)} °C`]);
-  if (Number.isFinite(data.encoderUsagePercent)) rows.push(['编码器', formatSystemPercent(data.encoderUsagePercent)]);
   if (Number.isFinite(data.decoderUsagePercent)) rows.push(['解码器', formatSystemPercent(data.decoderUsagePercent)]);
   return rows;
 }
@@ -1046,6 +1087,7 @@ function systemResourceSubtitle(resource) {
     const speed = Number.isFinite(data.speedMbps) ? `${data.speedMbps} Mbps` : '';
     return [data.name || '网络接口', speed].filter(Boolean).join(' - ');
   }
+  if (resource.type === 'gpu-encoder') return data.name || 'NVIDIA 编码引擎';
   return data.name || 'NVIDIA GPU';
 }
 
@@ -3201,8 +3243,8 @@ function dashboardResourceCard(resource) {
 
 function renderDashboardResources() {
   const snapshot = systemStatusState.snapshot || {};
-  const resources = systemResources(snapshot).filter(resource => ['cpu', 'memory', 'disk', 'gpu'].includes(resource.type));
-  const preferred = resources.filter(resource => resource.type !== 'gpu' || systemResourceAvailable(resource));
+  const resources = systemResources(snapshot).filter(resource => ['cpu', 'memory', 'disk', 'gpu', 'gpu-encoder'].includes(resource.type));
+  const preferred = resources.filter(resource => !['gpu', 'gpu-encoder'].includes(resource.type) || systemResourceAvailable(resource));
   $('#dashboardResources').innerHTML = preferred.slice(0, 6).map(dashboardResourceCard).join('') || '<p class="dashboard-empty">正在读取系统资源...</p>';
   renderDashboardNetwork(snapshot);
   renderTopbarTelemetry();
@@ -3700,11 +3742,6 @@ async function startPipelineCardMonitor(pipelineId) {
     const elements = pipelineCardMonitorElements(pipelineId);
     if (elements.image) {
       elements.image.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mjpeg&monitor=1`;
-      elements.image.addEventListener('load', () => {
-        if (pipelineCardMonitorState.sessions.get(pipelineId) === session) {
-          renderPipelineCardMonitor(pipelineId, { ...preview, state: 'receiving' });
-        }
-      }, { once: true });
     }
     renderPipelineCardMonitor(pipelineId, preview);
     pollPipelineCardMonitor(pipelineId, session);
@@ -4635,6 +4672,122 @@ function formatPreviewFps(value) {
   return Number.isInteger(fps) ? String(fps) : fps.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
+function ensureInputPreviewAudioGraph() {
+  const video = $('#inputPreviewVideo');
+  const meter = inputPreviewAudioMeterState;
+  if (!video || !window.AudioContext && !window.webkitAudioContext) return false;
+  if (meter.source) return true;
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    meter.context = new AudioContextClass();
+    meter.source = meter.context.createMediaElementSource(video);
+    meter.splitter = meter.context.createChannelSplitter(2);
+    meter.analysers = [meter.context.createAnalyser(), meter.context.createAnalyser()];
+    meter.output = meter.context.createGain();
+    meter.output.gain.value = 0;
+    meter.analysers.forEach(analyser => {
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.35;
+    });
+    meter.source.connect(meter.splitter);
+    meter.splitter.connect(meter.analysers[0], 0);
+    meter.splitter.connect(meter.analysers[1], 1);
+    meter.source.connect(meter.output);
+    meter.output.connect(meter.context.destination);
+    meter.video = video;
+    return true;
+  } catch {
+    meter.context?.close().catch(() => {});
+    meter.context = null;
+    meter.source = null;
+    meter.splitter = null;
+    meter.analysers = [];
+    meter.output = null;
+    return false;
+  }
+}
+
+function beginInputPreviewAudioMeter() {
+  const meter = inputPreviewAudioMeterState;
+  if (meter.frame) return;
+  if (!ensureInputPreviewAudioGraph()) {
+    $('#inputPreviewAudioMeterStatus').textContent = '此浏览器不支持音频电平分析';
+    return;
+  }
+  meter.context.resume().catch(() => {});
+  if (meter.frame) cancelAnimationFrame(meter.frame);
+  const token = ++meter.token;
+  const buffers = meter.analysers.map(analyser => new Float32Array(analyser.fftSize));
+  const peaks = [-60, -60];
+  const peakTimes = [0, 0];
+  const clipUntil = [0, 0];
+  let lastPaintAt = 0;
+  const paint = now => {
+    if (token !== meter.token || !$('#inputPreviewDialog').open) return;
+    meter.frame = requestAnimationFrame(paint);
+    if (now - lastPaintAt < 50) return;
+    lastPaintAt = now;
+    const audioState = $('#inputPreviewAudioBtn').dataset.audioState;
+    if (audioState === 'absent') return;
+    let anySignal = false;
+    let maxDb = -60;
+    meter.analysers.forEach((analyser, index) => {
+      analyser.getFloatTimeDomainData(buffers[index]);
+      let sum = 0;
+      let peak = 0;
+      for (const sample of buffers[index]) {
+        const magnitude = Math.abs(sample);
+        sum += sample * sample;
+        if (magnitude > peak) peak = magnitude;
+      }
+      const rms = Math.sqrt(sum / buffers[index].length);
+      const db = rms > 0.000001 ? Math.max(-60, 20 * Math.log10(rms)) : -60;
+      const peakDb = peak > 0.000001 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
+      maxDb = Math.max(maxDb, db);
+      if (db > -36) anySignal = true;
+      if (peakDb >= peaks[index] || now - peakTimes[index] > 900) {
+        peaks[index] = peakDb;
+        peakTimes[index] = now;
+      } else {
+        peaks[index] = Math.max(-60, peaks[index] - 0.4);
+      }
+      const meterDb = Math.max(-36, db);
+      const percent = Math.max(0, Math.min(100, ((meterDb + 36) / 36) * 100));
+      const peakPercent = Math.max(0, Math.min(99, ((Math.max(-36, peaks[index]) + 36) / 36) * 100));
+      $('#inputPreviewAudio' + (index === 0 ? 'Left' : 'Right')).style.height = `${percent}%`;
+      $('#inputPreviewAudio' + (index === 0 ? 'LeftPeak' : 'RightPeak')).style.bottom = `${peakPercent}%`;
+      const levelOutput = $('#inputPreviewAudioLevel' + (index === 0 ? 'Left' : 'Right'));
+      levelOutput.textContent = db > -60 ? `${Math.round(db)}` : '-inf';
+      if (peakDb >= -0.1) clipUntil[index] = now + 1500;
+      levelOutput.classList.toggle('is-clipping', now < clipUntil[index]);
+    });
+    const status = $('#inputPreviewAudioMeterStatus');
+    if (audioState === 'detecting') status.textContent = '正在检测输入音轨…';
+    else if (anySignal) status.textContent = '检测到音频信号';
+    else if (maxDb > -60) status.textContent = '电平低于 -36 dBFS';
+    else status.textContent = '等待音频信号';
+  };
+  meter.frame = requestAnimationFrame(paint);
+}
+
+function stopInputPreviewAudioMeter() {
+  const meter = inputPreviewAudioMeterState;
+  meter.token += 1;
+  if (meter.frame) cancelAnimationFrame(meter.frame);
+  meter.frame = 0;
+  if (meter.output) meter.output.gain.setTargetAtTime(0, meter.context.currentTime, 0.015);
+  meter.context?.suspend().catch(() => {});
+  $('#inputPreviewAudioMeter').hidden = true;
+  $('#inputPreviewAudioLeft').style.height = '0%';
+  $('#inputPreviewAudioRight').style.height = '0%';
+  $('#inputPreviewAudioLeftPeak').style.bottom = '0%';
+  $('#inputPreviewAudioRightPeak').style.bottom = '0%';
+  $('#inputPreviewAudioLevelLeft').textContent = '-inf';
+  $('#inputPreviewAudioLevelRight').textContent = '-inf';
+  $('#inputPreviewAudioLevelLeft').classList.remove('is-clipping');
+  $('#inputPreviewAudioLevelRight').classList.remove('is-clipping');
+}
+
 function renderInputPreview(preview = {}) {
   const image = $('#inputPreviewImage');
   const video = $('#inputPreviewVideo');
@@ -4644,6 +4797,8 @@ function renderInputPreview(preview = {}) {
   const retry = $('#retryInputPreviewBtn');
   const audioButton = $('#inputPreviewAudioBtn');
   const audioStatus = $('#inputPreviewAudioStatus');
+  const audioMeter = $('#inputPreviewAudioMeter');
+  const audioMeterStatus = $('#inputPreviewAudioMeterStatus');
   const receiving = preview.state === 'receiving';
   const width = Number(preview.width);
   const height = Number(preview.height);
@@ -4681,9 +4836,14 @@ function renderInputPreview(preview = {}) {
   audioButton.dataset.audioState = audioState;
   audioButton.hidden = !receiving || ['absent', 'disabled'].includes(audioState);
   audioStatus.hidden = !receiving;
-  if (receiving && audioState === 'absent') audioStatus.textContent = '该输入源没有音轨';
+  audioMeter.hidden = !receiving;
+  if (receiving && audioState === 'absent') {
+    audioStatus.textContent = '该输入源没有音轨';
+    audioMeterStatus.textContent = '无音轨';
+  }
   else if (receiving && audioState === 'detecting') audioStatus.textContent = '正在检测输入音轨…';
   else if (receiving) updateInputPreviewAudioControl();
+  if (receiving) beginInputPreviewAudioMeter();
 }
 
 function updateInputPreviewAudioControl(message = '') {
@@ -4692,7 +4852,9 @@ function updateInputPreviewAudioControl(message = '') {
   const status = $('#inputPreviewAudioStatus');
   const unavailable = ['absent', 'disabled'].includes(button.dataset.audioState);
   if (unavailable || video.hidden) return;
-  const listening = !video.muted && video.volume > 0;
+  const listening = inputPreviewAudioMeterState.output
+    ? inputPreviewAudioMeterState.output.gain.value > 0.5
+    : !video.muted && video.volume > 0;
   button.setAttribute('aria-pressed', String(listening));
   button.title = listening ? '关闭声音监听' : '开启声音监听';
   button.innerHTML = `<i data-lucide="${listening ? 'volume-2' : 'volume-x'}" aria-hidden="true"></i><span>${listening ? '声音监听中' : '开启声音'}</span>`;
@@ -4702,12 +4864,20 @@ function updateInputPreviewAudioControl(message = '') {
 
 async function playInputPreviewWithAudio() {
   const video = $('#inputPreviewVideo');
+  ensureInputPreviewAudioGraph();
+  inputPreviewAudioMeterState.context?.resume().catch(() => {});
+  if (inputPreviewAudioMeterState.output) {
+    inputPreviewAudioMeterState.output.gain.setTargetAtTime(1, inputPreviewAudioMeterState.context.currentTime, 0.015);
+  }
   video.muted = false;
   try {
     await video.play();
     updateInputPreviewAudioControl();
   } catch {
     video.muted = true;
+    if (inputPreviewAudioMeterState.output) {
+      inputPreviewAudioMeterState.output.gain.setTargetAtTime(0, inputPreviewAudioMeterState.context.currentTime, 0.015);
+    }
     await video.play().catch(() => {});
     updateInputPreviewAudioControl('浏览器已阻止自动播放声音，点击开启声音');
   }
@@ -5094,6 +5264,7 @@ async function releaseInputPreview() {
   if (inputPreviewState.closing) return;
   inputPreviewState.closing = true;
   clearInputPreviewPoll();
+  stopInputPreviewAudioMeter();
   const id = inputPreviewState.id;
   inputPreviewState.id = '';
   inputPreviewState.pipelineId = '';
@@ -5150,7 +5321,6 @@ async function openInputPreview() {
     inputPreviewState.id = preview.id;
     renderInputPreview(preview);
     const previewVideo = $('#inputPreviewVideo');
-    previewVideo.hidden = false;
     previewVideo.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     previewVideo.load();
     await playInputPreviewWithAudio();
@@ -5383,7 +5553,7 @@ async function startPipeline(id) {
   try {
     await api(`/api/pipelines/${id}/start`, { method: 'POST', body: '{}' });
     await loadState();
-    show('monitor');
+    showToast('分发任务已启动');
   } catch (e) {
     alert(e.message);
   }
@@ -5456,7 +5626,6 @@ async function openPipelinePreview(id) {
     inputPreviewState.id = preview.id;
     renderInputPreview(preview);
     const video = $('#inputPreviewVideo');
-    video.hidden = false;
     video.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     video.load();
     await playInputPreviewWithAudio();
@@ -5936,19 +6105,21 @@ $('#previewInputBtn').addEventListener('click', openInputPreview);
 $('#closeInputPreviewBtn').addEventListener('click', () => $('#inputPreviewDialog').close());
 $('#inputPreviewAudioBtn').addEventListener('click', async () => {
   const video = $('#inputPreviewVideo');
-  if (video.muted || video.volume === 0) {
-    if (video.volume === 0) video.volume = 1;
+  const meter = inputPreviewAudioMeterState;
+  const isListening = meter.output ? meter.output.gain.value > 0.5 : !video.muted && video.volume > 0;
+  if (meter.output) {
+    meter.context.resume().catch(() => {});
+    meter.output.gain.setTargetAtTime(isListening ? 0 : 1, meter.context.currentTime, 0.015);
     video.muted = false;
-    try {
-      await video.play();
-      updateInputPreviewAudioControl();
-    } catch {
-      video.muted = true;
-      updateInputPreviewAudioControl('无法启用声音，请使用播放器音量控件重试');
-    }
+  } else {
+    video.muted = isListening;
+  }
+  try { await video.play(); } catch {
+    if (meter.output) meter.output.gain.setTargetAtTime(0, meter.context.currentTime, 0.015);
+    video.muted = true;
+    updateInputPreviewAudioControl('无法启用声音，请再次点击监听');
     return;
   }
-  video.muted = true;
   updateInputPreviewAudioControl();
 });
 $('#inputPreviewVideo').addEventListener('volumechange', () => updateInputPreviewAudioControl());

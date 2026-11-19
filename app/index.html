@@ -5,10 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261117-premium-control-surface">
+  <link rel="stylesheet" href="/styles.css?v=20261119-input-preview-audio-meter-v3">
 </head>
 <body>
-  <main class="login-view" id="loginView">
+  <main class="auth-loading-view" id="authLoadingView" role="status" aria-live="polite">
+    <img src="/assets/streamhub-logo.png" alt="">
+    <strong>StreamHub</strong>
+    <span>正在验证会话…</span>
+  </main>
+  <main class="login-view" id="loginView" hidden>
     <a class="login-brand" href="/" aria-label="StreamHub">
       <img src="/assets/streamhub-logo.png" alt="">
       <strong>StreamHub</strong>
@@ -687,10 +692,40 @@
         </div>
         <button class="icon-button" id="closeInputPreviewBtn" type="button" aria-label="关闭输入源预览" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
       </header>
-      <div class="input-preview-frame">
-        <video id="inputPreviewVideo" controls autoplay playsinline hidden></video>
-        <img id="inputPreviewImage" alt="当前输入源视频预览" hidden>
-        <p id="inputPreviewStatus" role="status" aria-live="polite">正在连接输入源…</p>
+      <div class="input-preview-stage">
+        <div class="input-preview-frame">
+          <video id="inputPreviewVideo" controls autoplay playsinline hidden></video>
+          <img id="inputPreviewImage" alt="当前输入源视频预览" hidden>
+          <p id="inputPreviewStatus" role="status" aria-live="polite">正在连接输入源…</p>
+        </div>
+        <aside class="input-preview-audio-meter" id="inputPreviewAudioMeter" aria-label="输入源左右声道音频电平" hidden>
+          <div class="input-preview-audio-meter-head">
+            <strong>音频电平</strong>
+            <span>STEREO · dBFS</span>
+          </div>
+          <div class="input-preview-audio-meter-body">
+            <div class="input-preview-audio-rail" aria-hidden="true">
+              <span style="top:0%">0</span>
+              <span style="top:16.7%">-6</span>
+              <span style="top:33.3%">-12</span>
+              <span style="top:66.7%">-24</span>
+              <span style="top:100%">-36</span>
+            </div>
+            <span class="input-preview-audio-channel-label" data-channel="left">L</span>
+            <span class="input-preview-audio-channel-label" data-channel="right">R</span>
+            <div class="input-preview-audio-track" data-channel="left">
+              <span class="input-preview-audio-fill" id="inputPreviewAudioLeft" aria-hidden="true"></span>
+              <span class="input-preview-audio-peak" id="inputPreviewAudioLeftPeak" aria-hidden="true"></span>
+            </div>
+            <div class="input-preview-audio-track" data-channel="right">
+              <span class="input-preview-audio-fill" id="inputPreviewAudioRight" aria-hidden="true"></span>
+              <span class="input-preview-audio-peak" id="inputPreviewAudioRightPeak" aria-hidden="true"></span>
+            </div>
+            <output id="inputPreviewAudioLevelLeft">-inf</output>
+            <output id="inputPreviewAudioLevelRight">-inf</output>
+          </div>
+          <p class="input-preview-audio-meter-status" id="inputPreviewAudioMeterStatus" role="status" aria-live="polite">等待音频信号</p>
+        </aside>
       </div>
       <div class="input-preview-meta" id="inputPreviewMeta" hidden></div>
       <div class="input-preview-actions">
@@ -825,6 +860,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261117-premium-control-surface"></script>
+  <script src="/app.js?v=20261119-input-preview-audio-meter-v3"></script>
 </body>
 </html>
