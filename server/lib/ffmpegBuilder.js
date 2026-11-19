@@ -293,7 +293,7 @@ function roomPlaybackUrl(room, state = {}) {
   return `rtmp://127.0.0.1:${port}/live/${room.streamName}`;
 }
 
-function resolvePipelineSource(pipeline, state = {}) {
+function resolvePipelineSource(pipeline, state = {}, options = {}) {
   if (!pipeline) throw new Error('Pipeline is required');
   const input = pipeline.input || null;
 
@@ -320,6 +320,13 @@ function resolvePipelineSource(pipeline, state = {}) {
       url: input.url,
       sharedRelay: true,
     };
+  }
+
+  if (input && input.type === 'scene') {
+    if (typeof options.resolveSceneSource !== 'function') {
+      throw new Error('场景输入需要运行环境解析');
+    }
+    return options.resolveSceneSource(input.sceneId, state);
   }
 
   if (input && input.type === 'file') {

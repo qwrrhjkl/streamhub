@@ -16,6 +16,7 @@ const {
   resolvePipelineSource,
   sourceFingerprint,
 } = require('./ffmpegBuilder');
+const { resolveSceneSource } = require('./sceneSource');
 const { checkEncoderAvailability, checkNvencAvailability } = require('./encoderCapabilities');
 const {
   parseFFmpegStatsLine,
@@ -1847,7 +1848,9 @@ class ProcessManager {
     const pipeline = state.pipelines.find(item => item.id === pipelineId);
     if (!pipeline) throw new Error(`未找到管线 ${pipelineId}`);
 
-    const source = resolvePipelineSource(pipeline, state);
+    const source = resolvePipelineSource(pipeline, state, {
+      resolveSceneSource: (sceneId, sceneState) => resolveSceneSource(sceneId, sceneState, this.rootDir),
+    });
     this.ensureDecklinkAvailable(source);
     const configuredDestinations = (pipeline.destinationIds || [])
       .map(id => state.destinations.find(item => item.id === id))

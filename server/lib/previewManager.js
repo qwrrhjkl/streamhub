@@ -8,6 +8,7 @@ const {
   resolvePipelineSource,
   sourceFingerprint,
 } = require('./ffmpegBuilder');
+const { resolveSceneSource } = require('./sceneSource');
 const { createFFmpegProgressAccumulator, parseFFmpegStatsLine, parseFFmpegStreamInfoLine } = require('./metrics');
 const { resolveMediaBinaries } = require('./mediaBinaries');
 const { ensureDir } = require('./store');
@@ -247,9 +248,12 @@ class PreviewManager {
       throw previewError('该分发任务当前没有可用的 Program 预览', 409);
     }
     const pipeline = { input: request.input || null, sourceId: request.sourceId || '' };
+    const state = this.store.getState();
     const source = programPreview
       ? { id: `program-${pipelineId}`, name: programPreview.sourceLabel || '当前节目', type: 'program' }
-      : resolvePipelineSource(pipeline, this.store.getState());
+      : resolvePipelineSource(pipeline, state, {
+        resolveSceneSource: (sceneId, sceneState) => resolveSceneSource(sceneId, sceneState, this.rootDir),
+      });
     const sourceFingerprintValue = programPreview
       ? `program:${pipelineId}:${String(programPreview.epoch || '')}`
       : sourceFingerprint(source);
