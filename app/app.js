@@ -3028,6 +3028,7 @@ async function openStudioSwitcher(pipelineId) {
   const available = runningStudioPipelines(state.pipelines || [], state.monitor || {}).some(item => item.id === pipelineId);
   if (!pipeline || !available) return alert('切换台只支持正在运行的共享转推任务');
   await releaseStudioSwitcher();
+  await releasePipelineCardMonitor(pipelineId);
   studioSwitcherState.pipelineId = pipelineId;
   studioSwitcherState.sceneId = (state.scenes || [])[0] && state.scenes[0].id || '';
   studioSwitcherState.previewMode = 'scene';
@@ -3734,6 +3735,7 @@ async function startPipelineCardMonitor(pipelineId) {
       body: JSON.stringify({ ...createPipelineInputPreviewRequest(pipeline), format: 'mjpeg', monitor: true }),
     });
     if (pipelineCardMonitorState.sessions.get(pipelineId) !== session) {
+      session.starting = false;
       await api(`/api/previews/${encodeURIComponent(preview.id)}/stop`, { method: 'POST', body: '{}' }).catch(() => {});
       return;
     }
@@ -3764,6 +3766,11 @@ async function releasePipelineCardMonitor(pipelineId) {
   if (!session) return;
   pipelineCardMonitorState.sessions.delete(pipelineId);
   clearPipelineCardMonitorPoll(session);
+  const deadline = Date.now() + 5_000;
+  while (session.starting && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  clearPipelineCardMonitorPoll(session);
   const elements = pipelineCardMonitorElements(pipelineId);
   if (elements.image) {
     elements.image.removeAttribute('src');
@@ -3781,6 +3788,7 @@ function releaseAllPipelineCardMonitors() {
 }
 
 function pumpPipelineCardMonitors() {
+  if ($('#studioSwitcherDialog')?.open || $('#inputPreviewDialog')?.open) return;
   const active = pipelineCardMonitorState.sessions.size;
   if (active >= pipelineCardMonitorState.maxActive) return;
   const candidates = Array.from(pipelineCardMonitorState.visible).filter(id => !pipelineCardMonitorState.sessions.has(id));
@@ -6070,7 +6078,7 @@ $('#switchSceneBtn').addEventListener('click', switchSceneToProgram);
 $('#restoreProgramBtn').addEventListener('click', restoreStudioProgram);
 $('#closeStudioSwitcherBtn').addEventListener('click', () => $('#studioSwitcherDialog').close());
 $('#studioSwitcherDialog').addEventListener('close', () => {
-  releaseStudioSwitcher();
+  releaseStudioSwitcher().finally(pumpPipelineCardMonitors);
 });
 
 $$('[data-view]').forEach(btn => btn.addEventListener('click', () => {

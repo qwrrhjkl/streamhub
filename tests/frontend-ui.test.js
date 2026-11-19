@@ -1526,6 +1526,21 @@ test('form input preview releases the edited task card monitor before opening ca
   assert.match(app, /inputPreviewDialog'\)\.addEventListener\('close',[\s\S]*releaseInputPreview\(\)\.finally\(pumpPipelineCardMonitors\)/);
 });
 
+test('studio switcher releases the task card monitor and restores it after closing', () => {
+  const source = appFunctionSource('openStudioSwitcher');
+  assert.match(source, /await releasePipelineCardMonitor\(pipelineId\)/);
+  assert.ok(
+    source.indexOf('await releasePipelineCardMonitor(pipelineId)')
+      < source.indexOf('startProgramMonitor()'),
+    'card monitor must release the relay preview port before the Program preview starts',
+  );
+  const pump = appFunctionSource('pumpPipelineCardMonitors');
+  assert.match(pump, /studioSwitcherDialog'\)\?\.open/);
+  assert.match(pump, /inputPreviewDialog'\)\?\.open/);
+  assert.match(appFunctionSource('releasePipelineCardMonitor'), /while \(session\.starting/);
+  assert.match(app, /studioSwitcherDialog'\)\.addEventListener\('close',[\s\S]*releaseStudioSwitcher\(\)\.finally\(pumpPipelineCardMonitors\)/);
+});
+
 test('fallback pipelines show a Chinese active status and remain non-editable', () => {
   const context = appFunctions(['pipelineRuntimeStatus', 'pipelineStatusLabel'], {
     state: { monitor: { activePipelines: [{ pipelineId: 'pipe-a', status: 'fallback' }] } },
