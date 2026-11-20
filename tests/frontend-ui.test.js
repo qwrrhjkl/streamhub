@@ -1763,3 +1763,33 @@ test('process status table is dense responsive and internally scrollable', () =>
   assert.match(css, /\.process-number\{[^}]*font-variant-numeric:tabular-nums[^}]*text-align:right/);
   assert.match(css, /@media\(max-width:760px\)[\s\S]*\.process-status-head\{[^}]*align-items:stretch[^}]*flex-direction:column/);
 });
+
+test('log page keeps one report entry per task and platform', () => {
+  assert.match(app, /const TASK_LOG_KINDS = new Set\(\['relay', 'destination'\]\)/);
+  const context = appFunctions(['latestTaskLogs'], {
+    TASK_LOG_KINDS: new Set(['relay', 'destination']),
+    state: {
+      pipelines: [{ id: 'pipe-a' }],
+      destinations: [{ id: 'dest-a' }, { id: 'dest-b' }],
+    },
+  });
+  const result = context.latestTaskLogs([
+    { file: 'preview.log', kind: 'preview', pipelineId: '', active: true, timestamp: '2026-11-20T10:00:00Z', displayName: 'preview' },
+    { file: 'relay-old.log', kind: 'relay', pipelineId: 'pipe-a', active: false, timestamp: '2026-11-19T10:00:00Z', displayName: 'relay old' },
+    { file: 'relay-active.log', kind: 'relay', pipelineId: 'pipe-a', active: true, timestamp: '2026-11-18T10:00:00Z', displayName: 'relay active' },
+    { file: 'dest-old.log', kind: 'destination', pipelineId: 'pipe-a', destinationId: 'dest-a', active: false, timestamp: '2026-11-19T10:00:00Z', displayName: 'dest old' },
+    { file: 'dest-new.log', kind: 'destination', pipelineId: 'pipe-a', destinationId: 'dest-a', active: false, timestamp: '2026-11-20T09:00:00Z', displayName: 'dest new' },
+    { file: 'dest-b.log', kind: 'destination', pipelineId: 'pipe-a', destinationId: 'dest-b', active: true, timestamp: '2026-11-18T10:00:00Z', displayName: 'dest b' },
+    { file: 'rtmp.log', kind: 'rtmp-access', pipelineId: 'pipe-a', active: true, timestamp: '2026-11-20T10:00:00Z', displayName: 'rtmp' },
+    { file: 'deleted-destination.log', kind: 'destination', pipelineId: 'pipe-a', destinationId: 'dest-deleted', active: false, timestamp: '2026-11-20T10:00:00Z', displayName: 'deleted destination' },
+    { file: 'deleted-pipeline.log', kind: 'relay', pipelineId: 'pipe-deleted', active: false, timestamp: '2026-11-20T10:00:00Z', displayName: 'deleted pipeline' },
+  ]);
+
+  assert.deepEqual(Array.from(result, entry => entry.file).sort(), [
+    'dest-b.log', 'dest-new.log', 'relay-active.log',
+  ]);
+  assert.ok(result.every(entry => entry.pipelineId));
+  assert.match(appFunctionSource('loadLogs'), /latestTaskLogs\(/);
+  assert.match(html, /任务与平台日志/);
+  assert.match(html, /下载任务 \/ 平台报告/);
+});

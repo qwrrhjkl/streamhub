@@ -596,14 +596,14 @@
       <section class="view operations-workspace" id="view-logs">
         <div class="page-head">
           <div>
-            <h1>系统日志</h1>
-            <p>查看 StreamHub、FFmpeg 和 RTMP 接入服务日志。</p>
+            <h1>任务与平台日志</h1>
+            <p>仅显示分发任务与推流平台的运行日志，可生成 PDF 报告。</p>
           </div>
         </div>
         <div class="panel form">
           <div class="log-toolbar">
             <label>日志文件<select id="logSelect"></select></label>
-            <button class="log-report-button icon-button" id="downloadLogReportBtn" type="button" title="下载任务报告" aria-label="下载当前分发任务报告" disabled><i data-lucide="download" aria-hidden="true"></i></button>
+            <button class="log-report-button icon-button" id="downloadLogReportBtn" type="button" title="下载任务 / 平台报告" aria-label="下载当前任务或平台报告" disabled><i data-lucide="download" aria-hidden="true"></i></button>
             <button class="danger log-delete-button icon-button" id="deleteLogBtn" type="button" title="删除日志" aria-label="删除当前日志" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
           </div>
           <pre id="logText">暂无日志</pre>
@@ -860,6 +860,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261119-switcher-preview-port"></script>
+  <script src="/app.js?v=20261120-task-platform-reports-v2"></script>
 </body>
 </html>

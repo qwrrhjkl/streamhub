@@ -5832,6 +5832,36 @@ async function loadDevices() {
   $('#deviceText').textContent = JSON.stringify(d, null, 2);
 }
 
+const TASK_LOG_KINDS = new Set(['relay', 'destination']);
+
+function latestTaskLogs(logs = [], appState = typeof state !== 'undefined' ? state : {}) {
+  const pipelineIds = new Set((appState.pipelines || []).map(item => String(item.id)));
+  const destinationIds = new Set((appState.destinations || []).map(item => String(item.id)));
+  const groups = new Map();
+  for (const entry of logs) {
+    if (!entry || !TASK_LOG_KINDS.has(entry.kind) || !pipelineIds.has(String(entry.pipelineId || ''))) continue;
+    if (entry.kind === 'destination' && !destinationIds.has(String(entry.destinationId || ''))) continue;
+    const key = entry.kind === 'destination'
+      ? `${entry.pipelineId}:${entry.destinationId || ''}`
+      : `${entry.pipelineId}:relay`;
+    const current = groups.get(key);
+    const entryTime = Date.parse(entry.timestamp) || 0;
+    const currentTime = current ? Date.parse(current.timestamp) || 0 : 0;
+    if (!current
+      || (entry.active && !current.active)
+      || (Boolean(entry.active) === Boolean(current.active) && entryTime > currentTime)) {
+      groups.set(key, entry);
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    if (Boolean(a.active) !== Boolean(b.active)) return a.active ? -1 : 1;
+    const pipelineOrder = String(a.pipelineId).localeCompare(String(b.pipelineId));
+    if (pipelineOrder) return pipelineOrder;
+    if (a.kind !== b.kind) return a.kind === 'relay' ? -1 : 1;
+    return String(a.destinationId || '').localeCompare(String(b.destinationId || ''));
+  });
+}
+
 function selectedLogEntry() {
   return logCatalog.get($('#logSelect').value) || null;
 }
@@ -5850,17 +5880,16 @@ async function loadLogs(selectedFile = '') {
   const select = $('#logSelect');
   const preferredFile = selectedFile || select.value;
   const data = await api('/api/logs');
-  const logs = Array.isArray(data.logs)
-    ? data.logs
-    : (data.files || []).map(file => ({ file, displayName: file, active: false, deletable: true }));
+  const logs = latestTaskLogs(Array.isArray(data.logs) ? data.logs : [], state);
   logCatalog = new Map(logs.map(entry => [entry.file, entry]));
-  select.innerHTML = '<option value="">请选择日志文件</option>' + logs.map(entry => (
+  select.innerHTML = '<option value="">请选择任务或平台日志</option>' + logs.map(entry => (
     `<option value="${escapeHtml(entry.file)}">${escapeHtml(entry.displayName)}${entry.active ? '（运行中）' : ''}</option>`
   )).join('');
   select.value = preferredFile && logCatalog.has(preferredFile) ? preferredFile : '';
   syncLogDeleteButton();
   syncLogReportButton();
-  if (!select.value) $('#logText').textContent = data.content || '请选择日志文件';
+  if (!logs.length) $('#logText').textContent = '暂无可用的分发任务或平台日志';
+  else if (!select.value) $('#logText').textContent = '请选择任务或平台日志';
 }
 
 $('#logSelect').addEventListener('change', async event => {
