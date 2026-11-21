@@ -9,8 +9,10 @@ const MAX_SLIDESHOW_IMAGES = 20;
 const MIN_INTERVAL_MS = 500;
 const MAX_INTERVAL_MS = 60_000;
 const MAX_TRANSITION_MS = 5_000;
-const RENDER_FPS = 30;
-const CACHE_VERSION = 1;
+const DEFAULT_RENDER_FPS = 30;
+const MIN_RENDER_FPS = 1;
+const MAX_RENDER_FPS = 120;
+const CACHE_VERSION = 3;
 
 function validationError(message) {
   const error = new Error(message);
@@ -47,6 +49,14 @@ function parseResolution(value) {
   return { width, height, text: `${width}x${height}` };
 }
 
+function normalizeRenderFps(value = DEFAULT_RENDER_FPS) {
+  const fps = Number(value);
+  if (!Number.isFinite(fps) || fps < MIN_RENDER_FPS || fps > MAX_RENDER_FPS) {
+    throw validationError('幻灯片输出帧率无效');
+  }
+  return Number(fps.toFixed(3));
+}
+
 function imageIdentity(image) {
   const filePath = String(image.path || '');
   let stat;
@@ -59,16 +69,16 @@ function imageIdentity(image) {
   return { path: filePath, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
 }
 
-function slideshowCacheKey(slideshow, resolution) {
+function slideshowCacheKey(slideshow, resolution, fps = DEFAULT_RENDER_FPS) {
   const normalized = validateSlideshow(slideshow);
   const output = parseResolution(resolution);
+  const renderFps = normalizeRenderFps(fps);
   const payload = {
     version: CACHE_VERSION,
     images: normalized.images.map(imageIdentity),
     resolution: output.text,
     intervalMs: normalized.intervalMs,
-    transitionMs: normalized.transitionMs,
-    fps: RENDER_FPS,
+    fps: renderFps,
   };
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 24);
 }
@@ -77,35 +87,30 @@ function seconds(milliseconds) {
   return Number((milliseconds / 1000).toFixed(3)).toString();
 }
 
-function buildSlideshowRenderArgs(slideshow, resolution, outputPath) {
+function buildSlideshowRenderArgs(slideshow, resolution, outputPath, fps = DEFAULT_RENDER_FPS) {
   const normalized = validateSlideshow(slideshow);
   const { width, height } = parseResolution(resolution);
+  const renderFps = normalizeRenderFps(fps);
   if (normalized.images.length < 2) throw validationError('至少需要两张图片才能生成幻灯片缓存');
-  const inputs = [...normalized.images, normalized.images[0]];
-  const inputDurationMs = normalized.intervalMs + normalized.transitionMs;
+  const inputs = normalized.images;
   const inputArgs = inputs.flatMap(image => [
     '-loop', '1',
-    '-framerate', String(RENDER_FPS),
-    '-t', seconds(inputDurationMs),
+    '-framerate', String(renderFps),
+    '-t', seconds(normalized.intervalMs),
     '-i', String(image.path),
   ]);
   const filters = inputs.map((_, index) => (
     `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
     `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
-    `format=rgba,setsar=1[slide${index}]`
+    `format=rgba,setsar=1,trim=duration=${seconds(normalized.intervalMs)},` +
+    `setpts=PTS-STARTPTS[slide${index}]`
   ));
-  let previous = 'slide0';
-  for (let index = 1; index < inputs.length; index += 1) {
-    const output = `fade${index}`;
-    const offsetMs = (normalized.intervalMs * index) - normalized.transitionMs;
-    filters.push(
-      `[${previous}][slide${index}]xfade=transition=fade:duration=${seconds(normalized.transitionMs)}:` +
-      `offset=${seconds(Math.max(0, offsetMs))}[${output}]`,
-    );
-    previous = output;
-  }
   const cycleDurationMs = normalized.images.length * normalized.intervalMs;
-  filters.push(`[${previous}]trim=duration=${seconds(cycleDurationMs)},setpts=PTS-STARTPTS[outv]`);
+  filters.push(
+    `${inputs.map((_, index) => `[slide${index}]`).join('')}` +
+    `concat=n=${inputs.length}:v=1:a=0,trim=duration=${seconds(cycleDurationMs)},` +
+    'setpts=PTS-STARTPTS[outv]',
+  );
 
   return [
     '-hide_banner', '-nostdin', '-y',
@@ -113,7 +118,7 @@ function buildSlideshowRenderArgs(slideshow, resolution, outputPath) {
     '-filter_complex', filters.join(';'),
     '-map', '[outv]',
     '-an',
-    '-r', String(RENDER_FPS),
+    '-r', String(renderFps),
     '-c:v', 'qtrle',
     '-pix_fmt', 'argb',
     String(outputPath),
@@ -124,7 +129,14 @@ function defaultRunner(command, args) {
   return spawnSync(command, args, { encoding: 'utf8', timeout: 120_000, windowsHide: true });
 }
 
-function prepareSlideshowCache({ rootDir, slideshow, resolution, runner = defaultRunner, binaries = resolveMediaBinaries() }) {
+function prepareSlideshowCache({
+  rootDir,
+  slideshow,
+  resolution,
+  fps = DEFAULT_RENDER_FPS,
+  runner = defaultRunner,
+  binaries = resolveMediaBinaries(),
+}) {
   const normalized = validateSlideshow(slideshow);
   if (!normalized.images.length) return { preparedPath: '', cached: false, key: '' };
   normalized.images.forEach(imageIdentity);
@@ -132,7 +144,8 @@ function prepareSlideshowCache({ rootDir, slideshow, resolution, runner = defaul
     return { preparedPath: normalized.images[0].path, cached: false, key: '' };
   }
 
-  const key = slideshowCacheKey(normalized, resolution);
+  const renderFps = normalizeRenderFps(fps);
+  const key = slideshowCacheKey(normalized, resolution, renderFps);
   const cacheDir = path.join(rootDir, 'data', 'slideshow-cache');
   ensureDir(cacheDir);
   const outputPath = path.join(cacheDir, `${key}.mov`);
@@ -141,7 +154,7 @@ function prepareSlideshowCache({ rootDir, slideshow, resolution, runner = defaul
   }
 
   const temporaryPath = path.join(cacheDir, `${key}.${process.pid}.${crypto.randomUUID().slice(0, 8)}.tmp.mov`);
-  const args = buildSlideshowRenderArgs(normalized, resolution, temporaryPath);
+  const args = buildSlideshowRenderArgs(normalized, resolution, temporaryPath, renderFps);
   const result = runner(binaries.ffmpeg, args);
   if (!result || result.status !== 0 || !fs.existsSync(temporaryPath) || fs.statSync(temporaryPath).size === 0) {
     try { fs.rmSync(temporaryPath, { force: true }); } catch {}
@@ -154,6 +167,7 @@ function prepareSlideshowCache({ rootDir, slideshow, resolution, runner = defaul
 
 module.exports = {
   MAX_SLIDESHOW_IMAGES,
+  DEFAULT_RENDER_FPS,
   validateSlideshow,
   slideshowCacheKey,
   buildSlideshowRenderArgs,

@@ -17,6 +17,8 @@ const { createRotatingLogWriter } = require('./rotatingLogWriter');
 const PREVIEW_BOUNDARY = 'streamhub-preview';
 const IDLE_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 3_000;
+const RAW_INPUT_BITRATE_THRESHOLD_KBPS = 100_000;
+const MAX_PENDING_STDOUT_BYTES = 16 * 1024 * 1024;
 
 function previewError(message, statusCode) {
   const error = new Error(message);
@@ -124,15 +126,23 @@ class PreviewManager {
         : session.outputDescriptionStarted
           ? 'absent'
           : 'detecting';
+    const inputBitrateKbps = Number(session.inputBitrateKbps) || 0;
+    const previewBitrateKbps = Number(session.previewBitrateKbps) || 0;
+    const preferPreviewBitrate = session.monitor || inputBitrateKbps >= RAW_INPUT_BITRATE_THRESHOLD_KBPS;
+    const bitrateKbps = preferPreviewBitrate
+      ? previewBitrateKbps
+      : inputBitrateKbps || previewBitrateKbps;
     return {
       id: session.id,
       sourceLabel: session.source.name,
       state: session.state,
-      width: session.width || 0,
-      height: session.height || 0,
+      width: session.inputWidth || session.width || 0,
+      height: session.inputHeight || session.height || 0,
       fps: session.inputFps || session.fps || 0,
-      bitrateKbps: session.inputBitrateKbps || session.previewBitrateKbps || 0,
-      bitrateSource: session.inputBitrateKbps ? 'input' : session.previewBitrateKbps ? 'preview' : '',
+      bitrateKbps,
+      bitrateSource: preferPreviewBitrate
+        ? (previewBitrateKbps ? 'preview' : '')
+        : inputBitrateKbps ? 'input' : previewBitrateKbps ? 'preview' : '',
       videoCodec: session.videoCodec || '',
       audioCodec: session.audioCodec || '',
       audioState,
@@ -183,7 +193,11 @@ class PreviewManager {
 
   updateFromStderr(session, line) {
     const metadata = videoMetadata(line);
-    if (metadata) Object.assign(session, metadata);
+    if (metadata && !session.outputDescriptionStarted) {
+      session.inputWidth = metadata.width;
+      session.inputHeight = metadata.height;
+      Object.assign(session, metadata);
+    }
 
     const streamInfo = parseFFmpegStreamInfoLine(line);
     if (streamInfo && streamInfo.type === 'video' && !session.outputDescriptionStarted) {
@@ -303,6 +317,8 @@ class PreviewManager {
       message: '正在连接输入源…',
       width: 0,
       height: 0,
+      inputWidth: 0,
+      inputHeight: 0,
       fps: 0,
       inputFps: 0,
       inputBitrateKbps: 0,
@@ -317,6 +333,9 @@ class PreviewManager {
       stopping: false,
       stopTimer: null,
       exited: false,
+      stdoutStarted: false,
+      pendingStdout: [],
+      pendingStdoutBytes: 0,
       exitPromise,
       resolveExit,
       stderrRecords: createFFmpegProgressAccumulator(),
@@ -335,9 +354,17 @@ class PreviewManager {
     this.appendLog(session, `STARTED\nsourceLabel=${sourceLabel}`);
 
     child.stdout.on('data', chunk => {
-      for (const response of [...session.clients]) {
-        try { response.write(chunk); } catch { this.detach(session.id, response); }
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (!session.stdoutStarted) {
+        const remainingBytes = MAX_PENDING_STDOUT_BYTES - session.pendingStdoutBytes;
+        if (remainingBytes > 0) {
+          const buffered = data.length > remainingBytes ? data.subarray(0, remainingBytes) : data;
+          session.pendingStdout.push(buffered);
+          session.pendingStdoutBytes += buffered.length;
+        }
+        return;
       }
+      this.writePreviewChunk(session, data);
     });
     child.stderr.on('data', chunk => {
       for (const line of session.stderrRecords.push(chunk.toString('utf8'))) this.updateFromStderr(session, line);
@@ -362,6 +389,29 @@ class PreviewManager {
       connection: 'keep-alive',
     });
     session.clients.add(response);
+    if (!session.stdoutStarted) {
+      if (session.pendingStdoutBytes) {
+        try {
+          response.write(Buffer.concat(session.pendingStdout, session.pendingStdoutBytes));
+        } catch {
+          this.detach(id, response);
+          return;
+        }
+      }
+      session.pendingStdout = [];
+      session.pendingStdoutBytes = 0;
+      session.stdoutStarted = true;
+    }
+  }
+
+  writePreviewChunk(session, chunk) {
+    for (const response of [...session.clients]) {
+      try {
+        response.write(chunk);
+      } catch {
+        this.detach(session.id, response);
+      }
+    }
   }
 
   detach(id, response) {

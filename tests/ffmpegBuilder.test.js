@@ -169,7 +169,7 @@ test('buildDestinationUrl normalizes scheme-less RTMP targets before tee output'
 test('createRelayPlan creates deterministic multicast endpoints for a source', () => {
   const plan = createRelayPlan({ id: 'source-a', type: 'pull', url: 'rtmp://origin.example.com/live/pgm' }, { video: { outputResolution: '1920x1080', fps: '59.94' }, live: { bitrateKbps: 8000 } });
   assert.match(plan.outputUrl, /^udp:\/\/239\.101\.\d+\.\d+:\d+\?pkt_size=1316&ttl=1$/);
-  assert.match(plan.inputUrl, /^udp:\/\/@239\.101\.\d+\.\d+:\d+\?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576$/);
+  assert.match(plan.inputUrl, /^udp:\/\/@239\.101\.\d+\.\d+:\d+\?fifo_size=32768&overrun_nonfatal=1&buffer_size=8388608$/);
   assert.equal(plan.args.includes('-f'), true);
   assert.equal(plan.args.includes('mpegts'), true);
 });
@@ -574,7 +574,7 @@ test('shared relay uses deterministic distinct localhost UDP channels', () => {
   assert.notEqual(channels[0].port, channels[1].port);
   for (const channel of channels) {
     assert.match(channel.outputUrl, /^udp:\/\/127\.0\.0\.1:\d+\?pkt_size=1316$/);
-    assert.match(channel.inputUrl, /^udp:\/\/127\.0\.0\.1:\d+\?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576$/);
+    assert.match(channel.inputUrl, /^udp:\/\/127\.0\.0\.1:\d+\?fifo_size=32768&overrun_nonfatal=1&buffer_size=8388608$/);
   }
 });
 
@@ -605,6 +605,14 @@ test('preview builders keep full preview at source frame rate and use low-load c
     { type: 'pull', url: 'rtmp://origin.example.com/live/pgm' },
     { format: 'mp4', audio: true },
   );
+  const relayMp4 = buildRelayPreviewArgs(
+    createPreviewMirrorChannel('pipe-pgm'),
+    { format: 'mp4', audio: true },
+  );
+  const relayMonitor = buildRelayPreviewArgs(
+    createPreviewMirrorChannel('pipe-pgm'),
+    { monitor: true },
+  );
 
   for (const args of [direct, relay]) {
     assert.deepEqual(mappedStreams(args), ['0:v:0?']);
@@ -617,10 +625,18 @@ test('preview builders keep full preview at source frame rate and use low-load c
   assert.equal(monitor[monitor.indexOf('-vf') + 1], 'fps=1,scale=trunc(min(480\\,iw)/2)*2:-2:force_original_aspect_ratio=decrease');
   assert.equal(monitor[monitor.indexOf('-q:v') + 1], '8');
   assert.equal(monitor.includes('-an'), true);
+  assert.equal(monitor[monitor.indexOf('-threads') + 1], '1');
   assert.deepEqual(mappedStreams(withAudio), ['0:v:0?', '0:a:0?']);
   assert.equal(withAudio[withAudio.indexOf('-c:a') + 1], 'aac');
   assert.equal(withAudio[withAudio.indexOf('-ar') + 1], '48000');
   assert.equal(withAudio[withAudio.indexOf('-ac') + 1], '2');
+  assert.deepEqual(mappedStreams(relayMp4), ['0:v:0?', '0:a:0?']);
+  assert.equal(relayMp4[relayMp4.indexOf('-c:v') + 1], 'libx264');
+  assert.match(relayMp4[relayMp4.indexOf('-vf') + 1], /^scale=.*1280/);
+  assert.equal(relayMp4[relayMp4.indexOf('-probesize') + 1], '5000000');
+  assert.equal(relayMp4[relayMp4.indexOf('-analyzeduration') + 1], '5000000');
+  assert.equal(relayMonitor[relayMonitor.indexOf('-probesize') + 1], '1048576');
+  assert.equal(relayMonitor[relayMonitor.indexOf('-analyzeduration') + 1], '1000000');
 });
 
 test('professional rate-control modes never pass a quality number as NVENC rc', () => {
@@ -795,6 +811,40 @@ test('buildSharedRelayArgs composes ordered watermarks before a prepared slidesh
   assert.match(filter, /\[base2\]\[layer2\]overlay=0:0:format=auto:shortest=0:eof_action=repeat:repeatlast=1,format=yuv420p\[vout\]/);
   assert.equal(args[args.indexOf('-c:v') + 1], 'libx264');
   assert.equal(args[args.indexOf('-preset') + 1], 'superfast');
+});
+
+test('file and playlist sources reset audio and video timelines before slideshow overlays', () => {
+  const channels = createRelayChannels('pipe-a', [{ id: 'dest-1' }]);
+  const sources = [
+    { type: 'file', path: '/tmp/source.mp4', loop: true },
+    { type: 'playlist', manifestPath: '/tmp/source.ffconcat' },
+  ];
+
+  for (const source of sources) {
+    const args = buildSharedRelayArgs(source, channels, {
+      live: { videoEncoder: 'h264_nvenc', audioEncoder: 'aac', bitrateKbps: 6000 },
+      slideshow: {
+        images: [{ path: '/tmp/slide-a.png' }, { path: '/tmp/slide-b.png' }],
+        intervalMs: 4800,
+        transitionMs: 700,
+        preparedPath: '/tmp/slides.mov',
+      },
+    });
+    const filter = args[args.indexOf('-filter_complex') + 1];
+
+    assert.match(filter, /\[0:v\]fps=59\.94,settb=AVTB,setpts=PTS-STARTPTS\[source0\]/);
+    assert.equal(args[args.indexOf('-filter:a:0') + 1], 'asetpts=PTS-STARTPTS');
+
+    const withoutOverlays = buildSharedRelayArgs(source, channels, {
+      live: { videoEncoder: 'h264_nvenc', audioEncoder: 'aac', bitrateKbps: 6000 },
+      slideshow: { images: [] },
+      watermarks: [],
+    });
+    const plainFilter = withoutOverlays[withoutOverlays.indexOf('-filter_complex') + 1];
+    assert.match(plainFilter, /setpts=PTS-STARTPTS\[source0\]/);
+    assert.match(plainFilter, /format=yuv420p\[vout\]/);
+    assert.equal(withoutOverlays[withoutOverlays.indexOf('-filter:a:0') + 1], 'asetpts=PTS-STARTPTS');
+  }
 });
 
 test('non-overlay encoding preserves the saved x264 preset', () => {

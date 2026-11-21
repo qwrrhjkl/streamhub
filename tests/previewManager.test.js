@@ -11,6 +11,15 @@ function createChild() {
   const child = new EventEmitter();
   child.pid = 4321;
   child.stdout = new EventEmitter();
+  child.stdout.paused = false;
+  child.stdout.pause = () => {
+    child.stdout.paused = true;
+    return child.stdout;
+  };
+  child.stdout.resume = () => {
+    child.stdout.paused = false;
+    return child.stdout;
+  };
   child.stderr = new EventEmitter();
   child.killCalls = 0;
   child.kill = () => {
@@ -99,6 +108,24 @@ test('starts a separate fragmented MP4 preview and serves it with the matching m
   assert.equal(spawned[1].args.includes('frag_keyframe+empty_moov+default_base_moof'), true);
   previews.attach(mp4.id, response);
   assert.equal(response.headers['content-type'], 'video/mp4');
+});
+
+test('buffers preview output until the first stream client attaches', () => {
+  const { previews, child } = createPreviewHarness();
+  const preview = previews.start({
+    input: { type: 'url', url: 'rtmp://origin.example.com/live/pgm' },
+    format: 'mp4',
+    audio: true,
+  });
+
+  child.stdout.emit('data', Buffer.from('mp4-init-segment'));
+
+  const response = createResponse();
+  previews.attach(preview.id, response);
+  assert.equal(response.writes.join(''), 'mp4-init-segment');
+
+  child.stdout.emit('data', Buffer.from('live-fragment'));
+  assert.equal(response.writes.join(''), 'mp4-init-segmentlive-fragment');
 });
 
 test('uses a running shared-relay mirror instead of reopening the source', () => {
@@ -205,17 +232,32 @@ test('monitor preview is a separate one-frame session and publishes input metada
   assert.equal(spawned.length, 2);
   assert.match(spawned[1].args[spawned[1].args.indexOf('-vf') + 1], /^fps=1,scale=.*480/);
   child.stderr.emit('data', Buffer.from('Stream #0:0: Video: h264, yuv420p, 1920x1080, 8000 kb/s, 59.94 fps\n'));
+  child.stderr.emit('data', Buffer.from('Output #0, mpjpeg, to pipe:1:\n'));
+  child.stderr.emit('data', Buffer.from('frame=    1 fps=1.0 q=8.0 size=       8KiB time=00:00:01.00 bitrate=  65.5kbits/s speed=1x\n'));
   const descriptor = previews.describe(monitor.id);
   assert.equal(descriptor.width, 1920);
   assert.equal(descriptor.height, 1080);
   assert.equal(descriptor.fps, 59.94);
-  assert.equal(descriptor.bitrateKbps, 8000);
-  assert.equal(descriptor.bitrateSource, 'input');
+  assert.equal(descriptor.bitrateKbps, 65.5);
+  assert.equal(descriptor.bitrateSource, 'preview');
   assert.equal(descriptor.videoCodec, 'h264');
   assert.equal(descriptor.latencyMs, 1500);
   assert.equal(descriptor.audioState, 'disabled');
 });
 
+test('full DeckLink preview reports encoded preview bandwidth instead of raw UYVY throughput', () => {
+  const { previews, child } = createPreviewHarness();
+  const preview = previews.start({
+    input: { type: 'capture', capture: { backend: 'decklink', device: '81:610e9870:00000000' } },
+    format: 'mp4',
+  });
+  child.stderr.emit('data', Buffer.from('Stream #0:1: Video: rawvideo (UYVY / 0x59565955), uyvy422(progressive), 1920x1080, 1988667 kb/s, 59.94 fps\n'));
+  child.stderr.emit('data', Buffer.from('frame=    1 fps=1.0 q=8.0 size=      12KiB time=00:00:01.00 bitrate= 100.2kbits/s speed=1x\n'));
+
+  const descriptor = previews.describe(preview.id);
+  assert.equal(descriptor.bitrateKbps, 100.2);
+  assert.equal(descriptor.bitrateSource, 'preview');
+});
 test('audio preview reports present and absent input tracks without making audio mandatory', () => {
   const withAudio = createPreviewHarness();
   const present = withAudio.previews.start({

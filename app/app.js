@@ -378,7 +378,7 @@ let pendingLiveDelayStopPipelineId = null;
 let pipelineWatermarks = [];
 let pipelineNoSignalImage = null;
 let pipelineSlideshow = {
-  images: [], intervalMs: 2000, transitionMs: 700, loop: true,
+  images: [], intervalMs: 2000, transitionMs: 0, loop: true,
 };
 let captureDeviceCache = null;
 let captureDeviceLoadPromise = null;
@@ -421,7 +421,15 @@ let monitorDetailState = {
   lastRange: null,
   loading: false,
 };
-let inputPreviewState = { id: '', pipelineId: '', pollTimer: null, closing: false };
+let inputPreviewState = {
+  id: '',
+  pipelineId: '',
+  pollTimer: null,
+  watchdogTimer: null,
+  recoveryAttempts: 0,
+  recovering: false,
+  closing: false,
+};
 const inputPreviewAudioMeterState = {
   context: null,
   source: null,
@@ -493,9 +501,12 @@ function setUserMenuOpen(open) {
 
 function detachInputPreview() {
   const id = inputPreviewState.id;
+  clearInputPreviewVideoWatchdog();
   stopInputPreviewAudioMeter();
   inputPreviewState.id = '';
   inputPreviewState.pipelineId = '';
+  inputPreviewState.recoveryAttempts = 0;
+  inputPreviewState.recovering = false;
   inputPreviewState.closing = false;
   clearInputPreviewPoll();
   const image = $('#inputPreviewImage');
@@ -1788,14 +1799,9 @@ function settingsFromForm(form) {
     throw new Error('直播延时必须在 1 至 300 秒之间');
   }
   const intervalMs = Number(fd.get('slideshowIntervalMs') || 2000);
-  const transitionMs = Number(fd.get('slideshowTransitionMs') || 700);
   if (!Number.isFinite(intervalMs) || intervalMs < 500 || intervalMs > 60000) {
     throw new Error('幻灯片播放间隔必须在 500 至 60000 ms 之间');
   }
-  if (!Number.isFinite(transitionMs) || transitionMs < 0 || transitionMs > 5000) {
-    throw new Error('幻灯片淡入淡出时长必须在 0 至 5000 ms 之间');
-  }
-  if (transitionMs > intervalMs) throw new Error('幻灯片淡入淡出时长不能超过播放间隔');
   return {
     live: {
       videoEncoder: formControlValue(form, fd, 'videoEncoder', 'auto'),
@@ -1843,7 +1849,7 @@ function settingsFromForm(form) {
     slideshow: {
       images: pipelineSlideshow.images.map(item => ({ ...item })),
       intervalMs,
-      transitionMs,
+      transitionMs: 0,
       loop: true,
       ...(pipelineSlideshow.layout ? { layout: { ...pipelineSlideshow.layout } } : {}),
     },
@@ -2125,7 +2131,7 @@ function resetPipelineForm() {
   editingPipelineId = null;
   pipelineWatermarks = [];
   pipelineNoSignalImage = null;
-  pipelineSlideshow = { images: [], intervalMs: 2000, transitionMs: 700, loop: true };
+  pipelineSlideshow = { images: [], intervalMs: 2000, transitionMs: 0, loop: true };
   $('#pipelineForm').reset();
   fillSettingsForm($('#pipelineForm'), {});
   setControlValue($('#pipelineForm'), 'captureResolution', '1920x1080');
@@ -3452,7 +3458,10 @@ function handleRendererAction(button) {
   if (action === 'edit-pipeline') return editPipeline(id);
   if (action === 'start-pipeline') return startPipeline(id);
   if (action === 'stop-pipeline') return stopPipeline(id);
-  if (action === 'preview-pipeline') return openPipelinePreview(id);
+  if (action === 'preview-pipeline') {
+    resetInputPreviewRecovery();
+    return openPipelinePreview(id);
+  }
   if (action === 'duplicate-pipeline') return duplicatePipeline(id);
   if (action === 'create-pipeline') return openNewPipelineForm();
   if (action === 'refresh-program') return refreshPipelineProgram(id);
@@ -3694,7 +3703,7 @@ function renderPipelineCardMonitor(pipelineId, preview = {}) {
     const bitrate = Number(preview.bitrateKbps);
     if (width > 0 && height > 0) details.push(`输入 ${width}x${height}`);
     details.push('1 fps 低负载监看');
-    if (bitrate > 0) details.push(`输入 ${compactBitrate(bitrate)}`);
+    if (bitrate > 0) details.push(`${preview.bitrateSource === 'input' ? '输入' : '预览'} ${compactBitrate(bitrate)}`);
     elements.meta.textContent = details.join(' / ');
   }
 }
@@ -5245,6 +5254,56 @@ function clearInputPreviewPoll() {
   inputPreviewState.pollTimer = null;
 }
 
+function clearInputPreviewVideoWatchdog() {
+  if (inputPreviewState.watchdogTimer) clearTimeout(inputPreviewState.watchdogTimer);
+  inputPreviewState.watchdogTimer = null;
+}
+
+function resetInputPreviewRecovery() {
+  clearInputPreviewVideoWatchdog();
+  inputPreviewState.recoveryAttempts = 0;
+  inputPreviewState.recovering = false;
+}
+
+async function recoverInputPreview(message = '预览画面连接超时，正在重新连接…') {
+  const id = inputPreviewState.id;
+  const pipelineId = inputPreviewState.pipelineId;
+  const dialog = $('#inputPreviewDialog');
+  if (!id || !dialog.open || inputPreviewState.closing || inputPreviewState.recovering) return;
+  if (inputPreviewState.recoveryAttempts >= 1) return;
+  inputPreviewState.recoveryAttempts += 1;
+  inputPreviewState.recovering = true;
+  clearInputPreviewVideoWatchdog();
+  clearInputPreviewPoll();
+  stopInputPreviewAudioMeter();
+  renderInputPreview({
+    state: 'connecting',
+    sourceLabel: $('#inputPreviewSource').textContent || '当前输入源',
+    message,
+  });
+  try {
+    await releaseInputPreview();
+    if (pipelineId) await openPipelinePreview(pipelineId);
+    else await openInputPreview();
+  } catch (error) {
+    renderInputPreview({ state: 'failed', message: friendlyPipelineError(error.message), sourceLabel: '当前输入源' });
+  } finally {
+    inputPreviewState.recovering = false;
+  }
+}
+
+function armInputPreviewVideoWatchdog(id) {
+  clearInputPreviewVideoWatchdog();
+  const video = $('#inputPreviewVideo');
+  if (!id || !video) return;
+  inputPreviewState.watchdogTimer = setTimeout(() => {
+    inputPreviewState.watchdogTimer = null;
+    if (inputPreviewState.id !== id || !$('#inputPreviewDialog').open) return;
+    if (video.readyState >= 2) return;
+    recoverInputPreview();
+  }, 12_000);
+}
+
 function scheduleInputPreviewPoll() {
   clearInputPreviewPoll();
   if (!inputPreviewState.id || !$('#inputPreviewDialog').open) return;
@@ -5272,6 +5331,7 @@ async function releaseInputPreview() {
   if (inputPreviewState.closing) return;
   inputPreviewState.closing = true;
   clearInputPreviewPoll();
+  clearInputPreviewVideoWatchdog();
   stopInputPreviewAudioMeter();
   const id = inputPreviewState.id;
   inputPreviewState.id = '';
@@ -5331,6 +5391,7 @@ async function openInputPreview() {
     const previewVideo = $('#inputPreviewVideo');
     previewVideo.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     previewVideo.load();
+    armInputPreviewVideoWatchdog(preview.id);
     await playInputPreviewWithAudio();
     scheduleInputPreviewPoll();
   } catch (error) {
@@ -5636,6 +5697,7 @@ async function openPipelinePreview(id) {
     const video = $('#inputPreviewVideo');
     video.src = `/api/previews/${encodeURIComponent(preview.id)}/stream?format=mp4&epoch=${Date.now()}`;
     video.load();
+    armInputPreviewVideoWatchdog(preview.id);
     await playInputPreviewWithAudio();
     scheduleInputPreviewPoll();
   } catch (error) {
@@ -5794,12 +5856,11 @@ function editPipeline(id) {
   pipelineSlideshow = {
     images: Array.isArray(slideshow.images) ? slideshow.images.map(item => ({ ...item })) : [],
     intervalMs: Number(slideshow.intervalMs) || 2000,
-    transitionMs: Number.isFinite(Number(slideshow.transitionMs)) ? Number(slideshow.transitionMs) : 700,
+    transitionMs: 0,
     loop: true,
     ...(slideshow.layout ? { layout: { ...slideshow.layout } } : {}),
   };
   setControlValue(form, 'slideshowIntervalMs', pipelineSlideshow.intervalMs);
-  setControlValue(form, 'slideshowTransitionMs', pipelineSlideshow.transitionMs);
   renderPipelineOverlays();
   renderNoSignalImage();
   syncLiveDelayControls(form);
@@ -6138,7 +6199,10 @@ $('#refreshCaptureDevicesBtn').addEventListener('click', async () => {
     button.disabled = false;
   }
 });
-$('#previewInputBtn').addEventListener('click', openInputPreview);
+$('#previewInputBtn').addEventListener('click', () => {
+  resetInputPreviewRecovery();
+  return openInputPreview();
+});
 $('#closeInputPreviewBtn').addEventListener('click', () => $('#inputPreviewDialog').close());
 $('#inputPreviewAudioBtn').addEventListener('click', async () => {
   const video = $('#inputPreviewVideo');
@@ -6160,8 +6224,14 @@ $('#inputPreviewAudioBtn').addEventListener('click', async () => {
   updateInputPreviewAudioControl();
 });
 $('#inputPreviewVideo').addEventListener('volumechange', () => updateInputPreviewAudioControl());
+$('#inputPreviewVideo').addEventListener('loadeddata', clearInputPreviewVideoWatchdog);
+$('#inputPreviewVideo').addEventListener('playing', clearInputPreviewVideoWatchdog);
+$('#inputPreviewVideo').addEventListener('error', () => {
+  if (inputPreviewState.id) recoverInputPreview('预览流异常，正在重新连接…');
+});
 $('#retryInputPreviewBtn').addEventListener('click', async () => {
   const pipelineId = inputPreviewState.pipelineId;
+  resetInputPreviewRecovery();
   await releaseInputPreview();
   if (pipelineId) openPipelinePreview(pipelineId);
   else openInputPreview();

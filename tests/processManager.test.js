@@ -5,7 +5,101 @@ const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { ProcessManager } = require('../server/lib/processManager');
+const { ProcessManager, sourceFailureFallbackDelay } = require('../server/lib/processManager');
+
+test('capture fallback waits for startup grace and debounces brief signal loss', () => {
+  assert.equal(sourceFailureFallbackDelay({ status: 'running', startedAt: 1000 }, 2000), 9000);
+  assert.equal(sourceFailureFallbackDelay({ status: 'running', startedAt: 1000 }, 12000), 4000);
+  assert.equal(sourceFailureFallbackDelay({ status: 'fallback', startedAt: 1000 }, 2000), 4000);
+});
+
+test('a capture process that exits during startup schedules fallback after the startup grace', () => {
+  const startedAt = Date.now();
+  const process = { lastSourceError: 'No input signal detected' };
+  const session = {
+    pipelineId: 'pipe-capture',
+    mode: 'direct',
+    status: 'running',
+    startedAt,
+    source: { type: 'capture' },
+    pipelineProcess: process,
+    intentionalStop: false,
+    transitioning: false,
+    sourceFailureTimer: null,
+    sourceFailureProcess: null,
+  };
+  const scheduled = [];
+  const fakeManager = {
+    sessions: new Map([[session.pipelineId, session]]),
+    scheduleStartupSourceRetry() { return false; },
+    scheduleSourceFailureFallback: ProcessManager.prototype.scheduleSourceFailureFallback,
+    clearSourceFailureDebounce(target) {
+      target.sourceFailureTimer = null;
+      target.sourceFailureProcess = null;
+    },
+    scheduleTimeout(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+  };
+
+  ProcessManager.prototype.handleSourceProcessExit.call(fakeManager, session, process);
+
+  assert.equal(scheduled.length, 1);
+  assert.ok(scheduled[0].delay >= 9_900 && scheduled[0].delay <= 10_000);
+  assert.equal(session.sourceFailureProcess, process);
+});
+
+test('a shared relay capture exit retries the original source before falling back', () => {
+  const process = { lastSourceError: 'Cannot Autodetect input stream or No signal' };
+  const session = {
+    pipelineId: 'pipe-capture',
+    mode: 'shared-relay',
+    status: 'running',
+    startedAt: Date.now(),
+    source: { type: 'capture' },
+    liveDelayChannel: { port: 12345 },
+    pipelineProcess: process,
+    intentionalStop: false,
+    transitioning: false,
+    sourceFailureTimer: null,
+    sourceFailureProcess: null,
+    startupSourceRetries: 0,
+    startupSourceRetryTimer: null,
+  };
+  const scheduled = [];
+  let relayStarts = 0;
+  let fallbackSchedules = 0;
+  const fakeManager = {
+    sessions: new Map([[session.pipelineId, session]]),
+    store: { patches: [], patch(collection, id, patch) { this.patches.push({ collection, id, patch }); } },
+    clearSourceFailureDebounce: ProcessManager.prototype.clearSourceFailureDebounce,
+    canRetryStartupSource: ProcessManager.prototype.canRetryStartupSource,
+    scheduleStartupSourceRetry: ProcessManager.prototype.scheduleStartupSourceRetry,
+    scheduleSourceFailureFallback() { fallbackSchedules += 1; },
+    clearScheduledTimeout(timer) { timer.cleared = true; },
+    scheduleTimeout(callback, delay) {
+      const timer = { callback, delay, cleared: false, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+    startSharedRelaySource(targetSession) {
+      relayStarts += 1;
+      targetSession.pipelineProcess = { status: 'running' };
+    },
+  };
+
+  ProcessManager.prototype.handleSourceProcessExit.call(fakeManager, session, process);
+
+  assert.equal(fallbackSchedules, 0);
+  assert.equal(session.startupSourceRetries, 1);
+  assert.equal(scheduled[0].delay, 1500);
+  scheduled[0].callback();
+  assert.equal(relayStarts, 1);
+  assert.equal(fakeManager.store.patches.length, 1);
+  assert.equal(fakeManager.store.patches[0].patch.status, 'running');
+});
 
 function createFakeStore(state) {
   const patches = [];
@@ -1614,6 +1708,11 @@ test('shared-relay prepares a slideshow cache before spawning ffmpeg', () => {
   };
   const preparedCalls = [];
   const manager = createManager(state, fs.mkdtempSync(path.join(os.tmpdir(), 'streamhub-manager-slides-')), {
+    liveDelayFactory(options) {
+      const liveDelay = createLiveDelayStub();
+      liveDelay.onReady = options.onReady;
+      return liveDelay;
+    },
     prepareSlideshow: options => {
       preparedCalls.push(options);
       return { preparedPath: '/tmp/slides.mov', key: 'cache-key', cached: true };
@@ -1630,6 +1729,7 @@ test('shared-relay prepares a slideshow cache before spawning ffmpeg', () => {
 
   assert.equal(preparedCalls.length, 1);
   assert.equal(preparedCalls[0].resolution, '1920x1080');
+  assert.equal(preparedCalls[0].fps, '30');
   assert.equal(spawnCalls[0].args.includes('/tmp/slides.mov'), true);
   assert.equal(spawnCalls[0].args.includes('-stream_loop'), true);
   assert.equal(state.pipelines[0].settings.slideshow.preparedPath, undefined);

@@ -417,7 +417,7 @@ test('settings form defaults absent encoders to auto and retains disabled video 
     preset: 'slow', profile: 'main', outputResolution: '1280x720', fps: '50',
     sampleRate: '48000', channels: 'stereo', audioBitrateKbps: 320,
     delaySeconds: 45,
-    slideshowIntervalMs: 2000, slideshowTransitionMs: 700,
+    slideshowIntervalMs: 2000,
   };
   const form = fakeForm(values, ['bitrateKbps', 'keyframeSec', 'preset', 'profile', 'outputResolution', 'fps']);
   form.elements.delayEnabled = { checked: true, value: 'on' };
@@ -437,6 +437,7 @@ test('settings form defaults absent encoders to auto and retains disabled video 
   assert.equal(settings.live.delaySeconds, 45);
   assert.equal(settings.video.outputResolution, '1280x720');
   assert.equal(settings.video.fps, '50');
+  assert.equal(settings.slideshow.transitionMs, 0);
 
   delete form.elements.videoEncoder;
   assert.equal(context.settingsFromForm(form).live.videoEncoder, 'auto');
@@ -452,6 +453,21 @@ test('settings form defaults absent encoders to auto and retains disabled video 
   assert.equal(fillForm.elements.videoEncoder.value, 'h264_nvenc');
   assert.equal(fillForm.elements.delayEnabled.checked, true);
   assert.equal(fillForm.elements.delaySeconds.value, '60');
+});
+
+test('new slideshow settings discard the legacy crossfade duration', () => {
+  class FormDataStub {
+    get(name) { return name === 'slideshowIntervalMs' ? '4800' : null; }
+  }
+  const formControlValue = (_form, fd, name, fallback) => fd.get(name) || fallback;
+  const settingsFromForm = new Function(
+    'FormData', 'formControlValue', 'pipelineNoSignalImage', 'pipelineWatermarks', 'pipelineSlideshow',
+    `return (${appFunctionSource('settingsFromForm')});`,
+  )(FormDataStub, formControlValue, null, [], { images: [], transitionMs: 700 });
+  const settings = settingsFromForm({ elements: { delayEnabled: { checked: false } } });
+
+  assert.equal(settings.slideshow.intervalMs, 4800);
+  assert.equal(settings.slideshow.transitionMs, 0);
 });
 
 test('distribution form exposes live delay controls and three explicit stop choices', () => {
@@ -1411,7 +1427,8 @@ test('distribution form exposes ordered multi-watermark and slideshow controls',
   assert.match(pipelineForm, /id="uploadSlideshowBtn"/);
   assert.match(pipelineForm, /id="slideshowList"/);
   assert.match(pipelineForm, /id="slideshowIntervalMs"[^>]+value="2000"/);
-  assert.match(pipelineForm, /id="slideshowTransitionMs"[^>]+value="700"/);
+  assert.doesNotMatch(pipelineForm, /slideshowTransitionMs/);
+  assert.match(pipelineForm, /透明图片按顺序循环切换/);
   assert.match(app, /let pipelineWatermarks = \[\]/);
   assert.match(app, /let pipelineSlideshow = \{/);
   assert.match(app, /function uploadOverlayFiles/);
@@ -1493,7 +1510,9 @@ test('distribution input controls provide an accessible preview dialog', () => {
 });
 
 test('input preview reuses the live form payload and releases its stream on close', () => {
-  assert.match(app, /let inputPreviewState = \{ id: '', pipelineId: '', pollTimer: null, closing: false \}/);
+  assert.match(app, /let inputPreviewState = \{/);
+  assert.match(app, /watchdogTimer: null/);
+  assert.match(app, /recoveryAttempts: 0/);
   const buildPreviewRequest = appFunctionSource('buildPreviewRequest');
   assert.match(buildPreviewRequest, /const request = buildPipelineInput\(form\)/);
   assert.match(buildPreviewRequest, /input\.type === 'file' && input\.mediaId/);
@@ -1512,6 +1531,10 @@ test('input preview reuses the live form payload and releases its stream on clos
   assert.doesNotMatch(appFunctionSource('startPipelineCardMonitor'), /audio: true/);
   assert.match(appFunctionSource('playInputPreviewWithAudio'), /video\.muted = true/);
   assert.match(appFunctionSource('renderInputPreview'), /该输入源没有音轨/);
+  assert.match(appFunctionSource('armInputPreviewVideoWatchdog'), /setTimeout\([\s\S]*12_000/);
+  assert.match(appFunctionSource('recoverInputPreview'), /await releaseInputPreview\(\)/);
+  assert.match(appFunctionSource('recoverInputPreview'), /openPipelinePreview\(pipelineId\)/);
+  assert.match(app, /addEventListener\('loadeddata', clearInputPreviewVideoWatchdog\)/);
 });
 
 test('form input preview releases the edited task card monitor before opening capture hardware', () => {

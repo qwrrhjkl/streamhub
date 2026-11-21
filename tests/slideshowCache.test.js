@@ -39,14 +39,18 @@ test('slideshow cache keys include image order resolution timing and file identi
     const first = slideshowCacheKey({ images: [{ path: a }, { path: b }], intervalMs: 2000, transitionMs: 700 }, '1920x1080');
     const reordered = slideshowCacheKey({ images: [{ path: b }, { path: a }], intervalMs: 2000, transitionMs: 700 }, '1920x1080');
     const resized = slideshowCacheKey({ images: [{ path: a }, { path: b }], intervalMs: 2000, transitionMs: 700 }, '1280x720');
+    const faster = slideshowCacheKey({ images: [{ path: a }, { path: b }], intervalMs: 2000, transitionMs: 700 }, '1920x1080', 59.94);
+    const legacyFade = slideshowCacheKey({ images: [{ path: a }, { path: b }], intervalMs: 2000, transitionMs: 0 }, '1920x1080');
     assert.notEqual(first, reordered);
     assert.notEqual(first, resized);
+    assert.notEqual(first, faster);
+    assert.equal(first, legacyFade);
   } finally {
     fs.rmSync(rootDir, { recursive: true, force: true });
   }
 });
 
-test('render args preserve alpha and crossfade the last slide back to the first', () => {
+test('render args preserve alpha and hard-cut each slide at the configured interval', () => {
   const args = buildSlideshowRenderArgs({
     images: [{ path: '/a.png' }, { path: '/b.png' }],
     intervalMs: 2000,
@@ -56,17 +60,26 @@ test('render args preserve alpha and crossfade the last slide back to the first'
   const chains = filter.split(';');
   const slideChains = chains.filter(chain => /^\[\d+:v\]/.test(chain));
 
-  assert.equal(args.filter(value => value === '/a.png').length, 2);
-  assert.equal(args.filter(value => value === '-loop').length, 3);
-  assert.equal(slideChains.length, 3);
-  assert.equal(slideChains.every(chain => !chain.includes('setpts=')), true);
+  assert.equal(args.filter(value => value === '/a.png').length, 1);
+  assert.equal(args.filter(value => value === '-loop').length, 2);
+  assert.equal(slideChains.length, 2);
+  assert.equal(slideChains.every(chain => chain.includes('trim=duration=2,setpts=PTS-STARTPTS')), true);
   assert.match(filter, /pad=1920:1080:\(ow-iw\)\/2:\(oh-ih\)\/2:color=black@0/);
   assert.match(filter, /format=rgba/);
-  assert.match(filter, /xfade=transition=fade/);
-  assert.match(filter, /trim=duration=4,setpts=PTS-STARTPTS\[outv\]/);
+  assert.doesNotMatch(filter, /xfade=/);
+  assert.match(filter, /concat=n=2:v=1:a=0,trim=duration=4,setpts=PTS-STARTPTS\[outv\]/);
   assert.equal(args.includes('qtrle'), true);
   assert.equal(args.includes('argb'), true);
+  assert.equal(args[args.indexOf('-r') + 1], '30');
   assert.equal(args.at(-1), '/cache/out.mov');
+
+  const smoothArgs = buildSlideshowRenderArgs({
+    images: [{ path: '/a.png' }, { path: '/b.png' }],
+    intervalMs: 2000,
+    transitionMs: 700,
+  }, '1920x1080', '/cache/smooth.mov', 59.94);
+  assert.equal(smoothArgs[smoothArgs.indexOf('-framerate') + 1], '59.94');
+  assert.equal(smoothArgs[smoothArgs.indexOf('-r') + 1], '59.94');
 });
 
 test('prepareSlideshowCache reuses an existing cache and returns one image without rendering', () => {
@@ -76,8 +89,10 @@ test('prepareSlideshowCache reuses an existing cache and returns one image witho
     const b = fixture(rootDir, 'b.png', 'b');
     let runs = 0;
     let command = '';
+    let lastArgs = [];
     const runner = (value, args) => {
       command = value;
+      lastArgs = args;
       runs += 1;
       const tmpPath = args.at(-1);
       fs.writeFileSync(tmpPath, 'rendered');
@@ -89,14 +104,16 @@ test('prepareSlideshowCache reuses an existing cache and returns one image witho
       rootDir,
       slideshow,
       resolution: '1920x1080',
+      fps: 59.94,
       runner,
       binaries: { ffmpeg: '/opt/StreamHub/runtime/ffmpeg/bin/ffmpeg' },
     });
-    const second = prepareSlideshowCache({ rootDir, slideshow, resolution: '1920x1080', runner });
+    const second = prepareSlideshowCache({ rootDir, slideshow, resolution: '1920x1080', fps: 59.94, runner });
     const one = prepareSlideshowCache({ rootDir, slideshow: { ...slideshow, images: [{ path: a }] }, resolution: '1920x1080', runner });
 
     assert.equal(runs, 1);
     assert.equal(command, '/opt/StreamHub/runtime/ffmpeg/bin/ffmpeg');
+    assert.equal(lastArgs[lastArgs.indexOf('-r') + 1], '59.94');
     assert.equal(first.preparedPath, second.preparedPath);
     assert.equal(fs.existsSync(first.preparedPath), true);
     assert.equal(one.preparedPath, a);

@@ -410,17 +410,17 @@ function sourceInputLayout(source) {
   };
 }
 
-function normalizePullTimeline(source, encodingPlan) {
+function normalizeInputTimeline(source, encodingPlan) {
   return Boolean(
     source
-    && source.type === 'pull'
+    && ['pull', 'file', 'playlist'].includes(source.type)
     && encodingPlan
     && encodingPlan.videoEncoder !== 'copy'
     && encodingPlan.audioEncoder !== 'copy'
   );
 }
 
-function visualOverlayPlan(settings, source, { resetPullTimeline = false } = {}) {
+function visualOverlayPlan(settings, source, { resetInputTimeline = false } = {}) {
   const merged = mergeSettings(settings);
   const { firstVisualInputIndex } = sourceInputLayout(source);
   const customFallback = source && source.type === 'fallback' && source.fallbackKind === 'custom';
@@ -436,7 +436,7 @@ function visualOverlayPlan(settings, source, { resetPullTimeline = false } = {})
         ? [{ ...merged.slideshow.images[0], layout: merged.slideshow.layout, kind: 'static-slide' }]
         : []),
   ];
-  if (!layers.length && !customFallback && !resetPullTimeline) return null;
+  if (!layers.length && !customFallback && !resetInputTimeline) return null;
 
   const inputArgs = [];
   const sourceFilter = customFallback
@@ -449,7 +449,7 @@ function visualOverlayPlan(settings, source, { resetPullTimeline = false } = {})
       const safeHeight = Number.isFinite(height) && height > 0 ? height : 1080;
       return `[0:v]scale=${safeWidth}:${safeHeight}:force_original_aspect_ratio=decrease,pad=${safeWidth}:${safeHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${filterFrameRate(merged.video.fps)},settb=AVTB,setpts=PTS-STARTPTS[source0]`;
     })()
-    : `[0:v]fps=${filterFrameRate(merged.video.fps)},settb=AVTB${resetPullTimeline ? ',setpts=PTS-STARTPTS' : ''}[source0]`;
+    : `[0:v]fps=${filterFrameRate(merged.video.fps)},settb=AVTB${resetInputTimeline ? ',setpts=PTS-STARTPTS' : ''}[source0]`;
   const filters = [sourceFilter];
   let sourceLabel = 'source0';
   layers.forEach((layer, index) => {
@@ -488,8 +488,8 @@ function visualOverlayPlan(settings, source, { resetPullTimeline = false } = {})
   };
 }
 
-function pullTimelineAudioArgs(source, encodingPlan) {
-  return normalizePullTimeline(source, encodingPlan)
+function inputTimelineAudioArgs(source, encodingPlan) {
+  return normalizeInputTimeline(source, encodingPlan)
     ? ['-filter:a:0', 'asetpts=PTS-STARTPTS']
     : [];
 }
@@ -742,7 +742,7 @@ function createRelayPlan(source, settings) {
   const port = 24000 + (hash % 10000);
   const group = `239.101.${third}.${fourth}`;
   const outputUrl = `udp://${group}:${port}?pkt_size=1316&ttl=1`;
-  const inputUrl = `udp://@${group}:${port}?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576`;
+  const inputUrl = `udp://@${group}:${port}?fifo_size=32768&overrun_nonfatal=1&buffer_size=8388608`;
   const args = [
     '-hide_banner', '-nostdin', '-stats_period', '1',
     ...buildInputArgs(source),
@@ -768,7 +768,7 @@ function createRelayChannels(pipelineId, destinations, { transport = 'udp' } = {
       outputUrl: transport === 'tcp' ? '' : `udp://127.0.0.1:${port}?pkt_size=1316`,
       inputUrl: transport === 'tcp'
         ? `tcp://127.0.0.1:${port}`
-        : `udp://127.0.0.1:${port}?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576`,
+        : `udp://127.0.0.1:${port}?fifo_size=32768&overrun_nonfatal=1&buffer_size=8388608`,
     };
   });
 }
@@ -779,7 +779,7 @@ function createPreviewMirrorChannel(pipelineId) {
     id: 'preview-mirror',
     port,
     outputUrl: `udp://127.0.0.1:${port}?pkt_size=1316`,
-    inputUrl: `udp://127.0.0.1:${port}?fifo_size=4096&overrun_nonfatal=1&buffer_size=1048576`,
+    inputUrl: `udp://127.0.0.1:${port}?fifo_size=32768&overrun_nonfatal=1&buffer_size=8388608`,
   };
 }
 
@@ -789,7 +789,7 @@ function createRecordingMirrorChannel(pipelineId) {
     id: 'recording-mirror',
     port,
     outputUrl: `udp://127.0.0.1:${port}?pkt_size=1316`,
-    inputUrl: `udp://127.0.0.1:${port}?fifo_size=8192&overrun_nonfatal=1&buffer_size=2097152`,
+    inputUrl: `udp://127.0.0.1:${port}?fifo_size=32768&overrun_nonfatal=1&buffer_size=16777216`,
   };
 }
 
@@ -844,7 +844,7 @@ function buildOutputArgs(sourceOrRelay, destination, settings) {
   const merged = mergeSettings(settings);
   const encodingPlan = resolveEncodingPlan(sourceOrRelay, merged);
   const overlays = visualOverlayPlan(merged, sourceOrRelay, {
-    resetPullTimeline: normalizePullTimeline(sourceOrRelay, encodingPlan),
+    resetInputTimeline: normalizeInputTimeline(sourceOrRelay, encodingPlan),
   });
   const overlayActive = Boolean(overlays && overlays.overlayActive);
   const format = outputFormatFor(destination);
@@ -857,7 +857,7 @@ function buildOutputArgs(sourceOrRelay, destination, settings) {
     ...(overlays ? overlays.args : []),
     ...mapArgs(sourceOrRelay, Boolean(overlays)),
     ...videoArgs(merged, encodingPlan, overlayActive),
-    ...pullTimelineAudioArgs(sourceOrRelay, encodingPlan),
+    ...inputTimelineAudioArgs(sourceOrRelay, encodingPlan),
     ...audioArgs(merged, encodingPlan),
   ];
   if (format) args.push('-f', format);
@@ -879,7 +879,7 @@ function buildSharedRelayArgs(
   const merged = mergeSettings(settings);
   const encodingPlan = resolveEncodingPlan(source, merged);
   const overlays = visualOverlayPlan(merged, source, {
-    resetPullTimeline: normalizePullTimeline(source, encodingPlan),
+    resetInputTimeline: normalizeInputTimeline(source, encodingPlan),
   });
   const overlayActive = Boolean(overlays && overlays.overlayActive);
   const teeChannels = [
@@ -902,7 +902,7 @@ function buildSharedRelayArgs(
         ...(encodingPlan.videoEncoder === 'h264_nvenc' ? ['-forced-idr', '1'] : []),
       ]
       : []),
-    ...pullTimelineAudioArgs(source, encodingPlan),
+    ...inputTimelineAudioArgs(source, encodingPlan),
     ...audioArgs(merged, encodingPlan),
     '-muxdelay', '0', '-muxpreload', '0',
     '-f', 'tee',
@@ -918,6 +918,7 @@ function previewOutputArgs({ audio = false, format = 'mpjpeg', monitor = false }
     '-map', '0:v:0?',
     ...(wantsMp4 && audio ? ['-map', '0:a:0?'] : ['-an']),
     '-vf', videoFilter,
+    ...(monitor ? ['-threads', '1'] : []),
     ...(wantsMp4
       ? [
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
@@ -940,12 +941,16 @@ function buildDirectPreviewArgs(source, options = {}) {
 
 function buildRelayPreviewArgs(channel, options = {}) {
   if (!channel || !channel.inputUrl) throw new Error('Preview relay channel input is required');
+  const probesize = options.monitor ? '1048576' : '5000000';
+  const analyzeduration = options.monitor ? '1000000' : '5000000';
   return [
     '-hide_banner', '-nostdin', '-stats_period', '1',
     '-fflags', '+genpts',
     '-flags', 'low_delay',
     '-max_delay', '0',
     '-dts_delta_threshold', '0.1',
+    '-probesize', probesize,
+    '-analyzeduration', analyzeduration,
     '-i', channel.inputUrl,
     ...previewOutputArgs(options),
   ];
@@ -995,7 +1000,7 @@ function buildTeeOutputArgs(source, destinations, settings) {
   const merged = mergeSettings(settings);
   const encodingPlan = resolveEncodingPlan(source, merged);
   const overlays = visualOverlayPlan(merged, source, {
-    resetPullTimeline: normalizePullTimeline(source, encodingPlan),
+    resetInputTimeline: normalizeInputTimeline(source, encodingPlan),
   });
   const overlayActive = Boolean(overlays && overlays.overlayActive);
   return [
@@ -1004,7 +1009,7 @@ function buildTeeOutputArgs(source, destinations, settings) {
     ...(overlays ? overlays.args : []),
     ...mapArgs(source, Boolean(overlays)),
     ...videoArgs(merged, encodingPlan, overlayActive),
-    ...pullTimelineAudioArgs(source, encodingPlan),
+    ...inputTimelineAudioArgs(source, encodingPlan),
     ...audioArgs(merged, encodingPlan),
     '-f', 'tee',
     enabledDestinations.map(teeDestinationSpec).join('|'),

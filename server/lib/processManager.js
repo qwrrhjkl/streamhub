@@ -57,7 +57,10 @@ const BITRATE_SHORTFALL_WARNING_PERCENT = 30;
 const TRANSPORT_STARTUP_GRACE_MS = 7500;
 const RELAY_METRIC_MAX_AGE_MS = 5 * 1000;
 const RECOVERY_INTERVAL_MS = 3 * 1000;
-const SOURCE_FAILURE_DEBOUNCE_MS = 1 * 1000;
+const SOURCE_FAILURE_DEBOUNCE_MS = 4 * 1000;
+const STARTUP_FALLBACK_GRACE_MS = 10 * 1000;
+const STARTUP_SOURCE_RETRY_LIMIT = 4;
+const STARTUP_SOURCE_RETRY_DELAY_MS = 1500;
 const FALLBACK_SWITCH_TIMEOUT_MS = 30 * 1000;
 const FALLBACK_RETRY_DELAY_MS = 3 * 1000;
 const OUTPUT_RESTART_DELAY_MS = 3 * 1000;
@@ -70,6 +73,14 @@ const COPY_ENCODER_METRIC_KEYS = [
   'rawDropCounterPresent',
   'encoderSpeed',
 ];
+
+function sourceFailureFallbackDelay(session = {}, now = Date.now()) {
+  const startedAt = Number(session.startedAt) || now;
+  const remainingStartupGrace = Math.max(0, STARTUP_FALLBACK_GRACE_MS - (now - startedAt));
+  return session.status === 'running'
+    ? Math.max(SOURCE_FAILURE_DEBOUNCE_MS, remainingStartupGrace)
+    : SOURCE_FAILURE_DEBOUNCE_MS;
+}
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -1368,6 +1379,10 @@ class ProcessManager {
       this.setSessionSource(session, source);
       session.pipelineProcess = candidate;
       session.status = status;
+      if (status === 'running') {
+        session.startedAt = Date.now();
+        session.startupSourceRetries = 0;
+      }
       session.lastSourceError = lastSourceError;
       this.store.patch('pipelines', session.pipelineId, { status, ...patch });
       if (previousProcess && previousProcess !== candidate && typeof previousProcess.stop === 'function') {
@@ -1601,6 +1616,56 @@ class ProcessManager {
       session.sourceFailureTimer = null;
     }
     session.sourceFailureProcess = null;
+    if (session.startupSourceRetryTimer) {
+      this.clearScheduledTimeout(session.startupSourceRetryTimer);
+      session.startupSourceRetryTimer = null;
+    }
+  }
+
+  canRetryStartupSource(session, process, now = Date.now()) {
+    return Boolean(
+      session
+      && process
+      && session.mode === 'shared-relay'
+      && session.status === 'running'
+      && session.source
+      && session.source.type === 'capture'
+      && session.liveDelayChannel
+      && !session.intentionalStop
+      && !session.transitioning
+      && Number(session.startupSourceRetries || 0) < STARTUP_SOURCE_RETRY_LIMIT
+      && now - (Number(session.startedAt) || now) < STARTUP_FALLBACK_GRACE_MS
+    );
+  }
+
+  scheduleStartupSourceRetry(session, process) {
+    if (!this.canRetryStartupSource(session, process)) return false;
+    this.clearSourceFailureDebounce(session);
+    session.startupSourceRetries = Number(session.startupSourceRetries || 0) + 1;
+    const retry = () => {
+      session.startupSourceRetryTimer = null;
+      if (
+        this.sessions.get(session.pipelineId) !== session
+        || session.pipelineProcess !== process
+        || session.intentionalStop
+        || session.transitioning
+        || session.status !== 'running'
+      ) return;
+      try {
+        this.startSharedRelaySource(session, [session.liveDelayChannel]);
+        session.lastSourceError = '采集源正在重新连接';
+        this.store.patch('pipelines', session.pipelineId, { status: 'running' });
+      } catch {
+        if (!this.scheduleStartupSourceRetry(session, process)) {
+          this.scheduleSourceFailureFallback(session, process);
+        }
+      }
+    };
+    session.startupSourceRetryTimer = this.scheduleTimeout(retry, STARTUP_SOURCE_RETRY_DELAY_MS);
+    if (session.startupSourceRetryTimer && typeof session.startupSourceRetryTimer.unref === 'function') {
+      session.startupSourceRetryTimer.unref();
+    }
+    return true;
   }
 
   scheduleFallbackRetry(session) {
@@ -1665,6 +1730,7 @@ class ProcessManager {
     ) return;
     session.transitioning = true;
     session.fallbackRecoverySuccesses = 0;
+    session.startupSourceRetries = 0;
     try {
       const fallbackSource = this.fallbackSourceForSession(session);
       const encodingPlan = resolveEncodingPlan(fallbackSource, session.settings);
@@ -1752,6 +1818,8 @@ class ProcessManager {
       if (this.sessions.get(session.pipelineId) !== session || session.intentionalStop) return;
       this.setSessionSource(session, session.originalSource);
       session.status = 'running';
+      session.startedAt = Date.now();
+      session.startupSourceRetries = 0;
       session.lastSourceError = '';
       this.startSessionProcesses(session);
       this.store.patch('pipelines', session.pipelineId, { status: 'running', lastStartedAt: new Date().toISOString() });
@@ -1777,15 +1845,7 @@ class ProcessManager {
     }
   }
 
-  handleSourceFailureSignal(session, process, message) {
-    if (
-      this.sessions.get(session.pipelineId) !== session
-      || session.pipelineProcess !== process
-      || session.intentionalStop
-      || session.transitioning
-      || session.source.type !== 'capture'
-      || !/no (?:input )?signal|cannot autodetect input stream/i.test(String(message || ''))
-    ) return;
+  scheduleSourceFailureFallback(session, process) {
     this.clearSourceFailureDebounce(session);
     let timer = null;
     const confirmFailure = async () => {
@@ -1797,14 +1857,25 @@ class ProcessManager {
         || session.pipelineProcess !== process
         || session.intentionalStop
         || session.transitioning
-        || session.source.type !== 'capture'
       ) return;
       await this.enterFallback(session);
     };
     session.sourceFailureProcess = process;
-    timer = this.scheduleTimeout(confirmFailure, SOURCE_FAILURE_DEBOUNCE_MS);
+    timer = this.scheduleTimeout(confirmFailure, sourceFailureFallbackDelay(session));
     session.sourceFailureTimer = timer;
     if (timer && typeof timer.unref === 'function') timer.unref();
+  }
+
+  handleSourceFailureSignal(session, process, message) {
+    if (
+      this.sessions.get(session.pipelineId) !== session
+      || session.pipelineProcess !== process
+      || session.intentionalStop
+      || session.transitioning
+      || session.source.type !== 'capture'
+      || !/no (?:input )?signal|cannot autodetect input stream/i.test(String(message || ''))
+    ) return;
+    this.scheduleSourceFailureFallback(session, process);
   }
 
   handleSourceRecoverySignal(session, process) {
@@ -1830,7 +1901,8 @@ class ProcessManager {
       return;
     }
     if (!isSourceFailureMessage(process && (process.lastSourceError || process.lastError))) return;
-    void this.enterFallback(session);
+    if (this.scheduleStartupSourceRetry(session, process)) return;
+    this.scheduleSourceFailureFallback(session, process);
   }
 
   startPipeline(pipelineId) {
@@ -1882,6 +1954,7 @@ class ProcessManager {
         rootDir: this.rootDir,
         slideshow: settings.slideshow,
         resolution: settings.video.outputResolution,
+        fps: settings.video.fps,
         binaries: this.mediaBinaries,
       });
       if (prepared.preparedPath) settings.slideshow.preparedPath = prepared.preparedPath;
@@ -1914,6 +1987,8 @@ class ProcessManager {
       sourceFailureTimer: null,
       sourceFailureProcess: null,
       fallbackRecoverySuccesses: 0,
+      startupSourceRetries: 0,
+      startupSourceRetryTimer: null,
       probing: false,
       transitioning: false,
       intentionalStop: false,
@@ -2654,4 +2729,4 @@ class ProcessManager {
   }
 }
 
-module.exports = { ProcessManager };
+module.exports = { ProcessManager, sourceFailureFallbackDelay };
