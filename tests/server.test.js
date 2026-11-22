@@ -205,7 +205,7 @@ test('authentication routes issue and invalidate a protected management session'
   const health = await fetch(`${baseUrl}/api/health`);
   assert.equal(health.status, 200);
   const missingSession = await fetch(`${baseUrl}/api/auth/session`);
-  assert.deepEqual(await missingSession.json(), { authenticated: false });
+  assert.deepEqual(await missingSession.json(), { authenticated: false, sessionTtlMs: 12 * 60 * 60 * 1000 });
 
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
@@ -213,7 +213,9 @@ test('authentication routes issue and invalidate a protected management session'
     body: JSON.stringify({ username: 'admin', password: 'heroesports' }),
   });
   assert.equal(login.status, 200);
-  assert.deepEqual(await login.json(), { authenticated: true, username: 'admin' });
+  assert.deepEqual(await login.json(), {
+    authenticated: true, username: 'admin', role: 'admin', sessionTtlMs: 12 * 60 * 60 * 1000,
+  });
   const setCookie = login.headers.get('set-cookie');
   assert.match(setCookie, /streamhub_session=opaque-token/);
   assert.match(setCookie, /HttpOnly/);
@@ -234,6 +236,79 @@ test('authentication routes issue and invalidate a protected management session'
   assert.deepEqual(await logout.json(), { ok: true });
   assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
   assert.equal((await fetch(`${baseUrl}/api/state`, { headers: { cookie } })).status, 401);
+});
+
+test('auth endpoints manage users, while viewer sessions cannot write or administer accounts', async t => {
+  const auth = createAuthManager({ username: 'admin', password: 'heroesports' });
+  const storeState = {
+    settings: { lowBitrateWarningPercent: 30 },
+    pipelines: [],
+    destinations: [{ id: 'dest-a', streamKey: 'must-not-leak', url: 'rtmp://host/live/secret' }],
+    rooms: [{ id: 'room-a', publishSecret: 'room-secret' }],
+  };
+  const server = createServer({
+    rootDir: path.resolve(__dirname, '..'),
+    auth,
+    store: {
+      getState: () => storeState,
+      list: () => [],
+      update(mutator) { mutator(storeState); return storeState; },
+    },
+    manager: { monitor: () => ({ outputs: [] }) },
+    previewManager: createPreviewManager(),
+  });
+  await listen(server);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'heroesports' }),
+  });
+  const adminCookie = adminLogin.headers.get('set-cookie').split(';', 1)[0];
+  const preview = await fetch(`${baseUrl}/api/previews`, {
+    method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' }, body: '{}',
+  });
+  assert.equal(preview.status, 201);
+  assert.equal(auth.listAudit(20).some(entry => entry.action === 'operation.succeeded' && entry.details.path === '/api/previews'), true);
+  const alertSettings = await fetch(`${baseUrl}/api/system-settings`, {
+    method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ lowBitrateWarningPercent: 45 }),
+  });
+  assert.equal(alertSettings.status, 200);
+  assert.equal((await alertSettings.json()).settings.lowBitrateWarningPercent, 45);
+  const invalidAlertSettings = await fetch(`${baseUrl}/api/system-settings`, {
+    method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ lowBitrateWarningPercent: 80 }),
+  });
+  assert.equal(invalidAlertSettings.status, 400);
+  const created = await fetch(`${baseUrl}/api/auth/users`, {
+    method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'observer', password: 'observer-password', role: 'viewer' }),
+  });
+  assert.equal(created.status, 201);
+  const viewer = (await created.json()).user;
+  assert.equal(viewer.role, 'viewer');
+
+  const viewerLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'observer', password: 'observer-password' }),
+  });
+  const viewerCookie = viewerLogin.headers.get('set-cookie').split(';', 1)[0];
+  const viewerStateResponse = await fetch(`${baseUrl}/api/state`, { headers: { cookie: viewerCookie } });
+  assert.equal(viewerStateResponse.status, 200);
+  const viewerState = await viewerStateResponse.json();
+  assert.equal(viewerState.destinations[0].streamKey, '');
+  assert.equal(viewerState.destinations[0].url, '');
+  assert.equal(viewerState.rooms[0].publishSecret, '');
+  const write = await fetch(`${baseUrl}/api/pipelines`, {
+    method: 'POST', headers: { cookie: viewerCookie, 'content-type': 'application/json' }, body: '{}',
+  });
+  assert.equal(write.status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/destinations`, { headers: { cookie: viewerCookie } })).status, 403);
+  const administer = await fetch(`${baseUrl}/api/auth/users`, {
+    method: 'POST', headers: { cookie: viewerCookie, 'content-type': 'application/json' }, body: '{}',
+  });
+  assert.equal(administer.status, 403);
 });
 
 test('health, RTMP callbacks, and auth routes stay public while management dependencies stay untouched', async t => {

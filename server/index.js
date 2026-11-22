@@ -18,11 +18,29 @@ const { createLogManager } = require('./lib/logManager');
 const { createPipelineReport } = require('./lib/pipelineReport');
 const { detectEncoderCapabilities } = require('./lib/encoderCapabilities');
 const {
+  SESSION_TTL_MS,
   createAuthManager,
   tokenFromCookie,
   sessionCookie,
   expiredSessionCookie,
 } = require('./lib/auth');
+
+function authSessionTtl(auth) {
+  if (typeof auth.getSettings !== 'function') return SESSION_TTL_MS;
+  const configured = Number(auth.getSettings().sessionTtlMs);
+  return Number.isFinite(configured) && configured > 0 ? configured : SESSION_TTL_MS;
+}
+
+function viewerSafeState(value) {
+  if (Array.isArray(value)) return value.map(viewerSafeState);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    if (/^(?:password|publishSecret|secret|streamKey|token|passphrase|url|publishUrl)$/i.test(key)) {
+      return [key, ''];
+    }
+    return [key, viewerSafeState(item)];
+  }));
+}
 
 const ROOT = process.env.STREAMHUB_ROOT || path.resolve(__dirname, '..');
 const HOST = process.env.STREAMHUB_HOST || '0.0.0.0';
@@ -215,8 +233,8 @@ async function handleApi(req, res, url, {
   if (url.pathname === '/api/auth/session' && req.method === 'GET') {
     const session = auth.resolve(sessionToken);
     return json(res, 200, session
-      ? { authenticated: true, username: session.username }
-      : { authenticated: false });
+      ? { authenticated: true, username: session.username, role: session.role, expiresAt: session.expiresAt, sessionTtlMs: authSessionTtl(auth) }
+      : { authenticated: false, sessionTtlMs: authSessionTtl(auth) });
   }
 
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
@@ -233,8 +251,16 @@ async function handleApi(req, res, url, {
       }
       return json(res, 401, { error: result.message });
     }
-    res.setHeader('set-cookie', sessionCookie(result.token, { secure: requestIsSecure(req) }));
-    return json(res, 200, { authenticated: true, username: result.username });
+    res.setHeader('set-cookie', sessionCookie(result.token, {
+      secure: requestIsSecure(req),
+      maxAgeSec: Math.ceil(authSessionTtl(auth) / 1000),
+    }));
+    return json(res, 200, {
+      authenticated: true,
+      username: result.username,
+      role: result.role,
+      sessionTtlMs: authSessionTtl(auth),
+    });
   }
 
   if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
@@ -243,10 +269,129 @@ async function handleApi(req, res, url, {
     return json(res, 200, { ok: true });
   }
 
-  if (url.pathname.startsWith('/api/auth/')) return json(res, 404, { error: 'Not found' });
-
   const session = auth.resolve(sessionToken);
   if (!session) return json(res, 401, { error: '\u767b\u5f55\u72b6\u6001\u5df2\u5931\u6548' });
+  res.setHeader('set-cookie', sessionCookie(sessionToken, {
+    secure: requestIsSecure(req),
+    maxAgeSec: Math.ceil(authSessionTtl(auth) / 1000),
+  }));
+
+  const requireAdmin = () => {
+    if (session.role !== 'admin') {
+      const error = new Error('只有管理员可以执行此操作');
+      error.statusCode = 403;
+      throw error;
+    }
+  };
+  const actor = session.username;
+
+  if (url.pathname === '/api/auth/password' && req.method === 'POST') {
+    const body = await readBody(req);
+    auth.changePassword(sessionToken, body.currentPassword, body.newPassword);
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === '/api/auth/sessions' && req.method === 'GET') {
+    return json(res, 200, { sessions: auth.listSessions(sessionToken) });
+  }
+  if (url.pathname === '/api/auth/sessions' && req.method === 'DELETE') {
+    return json(res, 200, auth.revokeOtherSessions(sessionToken));
+  }
+  const sessionMatch = url.pathname.match(/^\/api\/auth\/sessions\/([^/]+)$/);
+  if (sessionMatch && req.method === 'DELETE') {
+    return json(res, 200, auth.revokeSession(decodeURIComponent(sessionMatch[1]), sessionToken));
+  }
+
+  if (url.pathname === '/api/auth/users' && req.method === 'GET') {
+    requireAdmin();
+    return json(res, 200, { users: auth.listUsers() });
+  }
+  if (url.pathname === '/api/auth/users' && req.method === 'POST') {
+    requireAdmin();
+    const body = await readBody(req);
+    return json(res, 201, { user: auth.createUser(body, actor) });
+  }
+  const userMatch = url.pathname.match(/^\/api\/auth\/users\/([^/]+)$/);
+  if (userMatch && req.method === 'PATCH') {
+    requireAdmin();
+    const body = await readBody(req);
+    const userId = decodeURIComponent(userMatch[1]);
+    if (userId === session.userId && (body.role !== undefined || body.enabled === false)) {
+      return json(res, 409, { error: '不能修改当前登录账户的角色或停用状态' });
+    }
+    return json(res, 200, { user: auth.updateUser(userId, body, actor) });
+  }
+  if (userMatch && req.method === 'DELETE') {
+    requireAdmin();
+    if (decodeURIComponent(userMatch[1]) === session.userId) {
+      return json(res, 409, { error: '不能删除当前登录账户' });
+    }
+    return json(res, 200, auth.deleteUser(decodeURIComponent(userMatch[1]), actor));
+  }
+  const resetPasswordMatch = url.pathname.match(/^\/api\/auth\/users\/([^/]+)\/password$/);
+  if (resetPasswordMatch && req.method === 'POST') {
+    requireAdmin();
+    const body = await readBody(req);
+    return json(res, 200, auth.resetPassword(decodeURIComponent(resetPasswordMatch[1]), body.newPassword, actor));
+  }
+  if (url.pathname === '/api/auth/settings' && req.method === 'GET') {
+    requireAdmin();
+    return json(res, 200, auth.getSettings());
+  }
+  if (url.pathname === '/api/auth/settings' && ['PUT', 'PATCH'].includes(req.method)) {
+    requireAdmin();
+    const body = await readBody(req);
+    return json(res, 200, auth.updateSettings(body, actor));
+  }
+  if (url.pathname === '/api/auth/audit' && req.method === 'GET') {
+    requireAdmin();
+    return json(res, 200, { entries: auth.listAudit(url.searchParams.get('limit')) });
+  }
+  if (url.pathname.startsWith('/api/auth/')) return json(res, 404, { error: 'Not found' });
+
+  if (session.role === 'viewer') {
+    const viewerReadable = url.pathname === '/api/state'
+      || url.pathname === '/api/monitor'
+      || url.pathname === '/api/system-status'
+      || url.pathname === '/api/encoding-capabilities'
+      || url.pathname === '/api/logs'
+      || /^\/api\/reports\//.test(url.pathname);
+    if (!['GET', 'HEAD'].includes(req.method) || !viewerReadable) {
+      return json(res, 403, { error: '观察员账户只能查看运行状态、监控与日志' });
+    }
+  }
+  if (session.role === 'operator' && url.pathname === '/api/system/shutdown') {
+    return json(res, 403, { error: '只有管理员可以关闭服务' });
+  }
+  if (!url.pathname.startsWith('/api/auth/')
+    && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+    && typeof auth.audit === 'function') {
+    res.once('finish', () => {
+      try {
+        auth.audit(res.statusCode < 400 ? 'operation.succeeded' : 'operation.rejected', actor, {
+          method: req.method,
+          path: url.pathname,
+          status: res.statusCode,
+        });
+      } catch {}
+    });
+  }
+
+  if (url.pathname === '/api/system-settings') {
+    requireAdmin();
+    if (req.method === 'GET') return json(res, 200, { settings: store.getState().settings || {} });
+    if (req.method !== 'PUT' && req.method !== 'PATCH') return json(res, 405, { error: 'Method not allowed' });
+    const body = await readBody(req);
+    const threshold = Number(body.lowBitrateWarningPercent);
+    if (!Number.isInteger(threshold) || threshold < 10 || threshold > 70) {
+      return json(res, 400, { error: '低码率告警阈值须为 10 至 70 的整数百分比' });
+    }
+    const updated = store.update(current => {
+      current.settings = { ...(current.settings || {}), lowBitrateWarningPercent: threshold };
+      return current;
+    });
+    return json(res, 200, { settings: updated.settings });
+  }
 
   if (url.pathname === '/api/system/shutdown') {
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -283,8 +428,9 @@ async function handleApi(req, res, url, {
 
   if (url.pathname === '/api/state' && req.method === 'GET') {
     const monitorOptions = { ...parseMonitorQuery(url.searchParams), historyMode: 'memory' };
+    const savedState = session.role === 'viewer' ? viewerSafeState(store.getState()) : store.getState();
     return json(res, 200, {
-      ...store.getState(),
+      ...savedState,
       mediaAssets: mediaAssets.list(),
       programs: typeof manager.programStates === 'function' ? manager.programStates() : {},
       monitor: typeof manager.publicMonitor === 'function'
@@ -530,6 +676,7 @@ function createServer(options = {}) {
   const auth = options.auth || createAuthManager({
     username: process.env.STREAMHUB_AUTH_USERNAME,
     password: process.env.STREAMHUB_AUTH_PASSWORD,
+    filePath: path.join(rootDir, 'data', 'auth.json'),
   });
   const appDir = path.join(rootDir, 'app');
   const port = options.port === undefined ? PORT : Number(options.port);

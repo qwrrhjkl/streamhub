@@ -62,7 +62,7 @@ function appFunctions(names, context = {}) {
 
 test('approved A5 login markup gates the console and exposes an accessible user menu', () => {
   for (const id of [
-    'loginView', 'loginForm', 'loginUsername', 'loginPassword', 'loginError', 'loginSubmit',
+    'loginView', 'loginForm', 'loginUsername', 'loginPassword', 'loginError', 'loginSubmit', 'loginSessionPolicy',
     'consoleApp', 'userMenuButton', 'userMenu', 'currentUsername', 'logoutButton',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `${id} should exist`);
@@ -1463,7 +1463,10 @@ test('static application assets disable caching and version the main script', ()
 
 test('bitrate shortfall warning begins at thirty percent in overview and detail', () => {
   assert.match(app, /const BITRATE_SHORTFALL_WARNING_PERCENT = 30/);
-  assert.equal((app.match(/transportShortfallPercent >= BITRATE_SHORTFALL_WARNING_PERCENT/g) || []).length, 2);
+  assert.match(app, /function bitrateWarningThresholdPercent\(\)/);
+  assert.equal((app.match(/transportShortfallPercent >= bitrateWarningThresholdPercent\(\)/g) || []).length, 2);
+  assert.match(html, /id="alertPreferencesForm"/);
+  assert.match(server, /url\.pathname === '\/api\/system-settings'/);
 });
 
 test('monitor detail exposes a server-persisted dropped-frame reset action', () => {

@@ -383,6 +383,12 @@ let pipelineSlideshow = {
 let captureDeviceCache = null;
 let captureDeviceLoadPromise = null;
 const BITRATE_SHORTFALL_WARNING_PERCENT = 30;
+function bitrateWarningThresholdPercent() {
+  const configured = Number(state && state.settings && state.settings.lowBitrateWarningPercent);
+  return Number.isInteger(configured) && configured >= 10 && configured <= 70
+    ? configured
+    : BITRATE_SHORTFALL_WARNING_PERCENT;
+}
 const MAX_OVERLAY_IMAGES = 20;
 const SYSTEM_HISTORY_LIMIT = 30;
 const DASHBOARD_NETWORK_WINDOW_MS = 5 * 60_000;
@@ -397,6 +403,7 @@ let encodingCapabilities = { checked: false, nvencAvailable: true, message: '', 
 const authState = {
   authenticated: false,
   username: '',
+  role: '',
   resolving: true,
   signingOut: false,
   loginPending: false,
@@ -521,9 +528,10 @@ function detachInputPreview() {
   return id;
 }
 
-async function enterConsole(username) {
+async function enterConsole(username, role = 'admin') {
   authState.authenticated = true;
   authState.username = String(username || '');
+  authState.role = String(role || 'viewer');
   authState.resolving = false;
   $('#currentUsername').textContent = authState.username;
   $('#userMenu').hidden = true;
@@ -531,6 +539,9 @@ async function enterConsole(username) {
   $('#authLoadingView').hidden = true;
   $('#loginView').hidden = true;
   $('#consoleApp').hidden = false;
+  if ($('#consoleApp').dataset) $('#consoleApp').dataset.role = authState.role;
+  if ($('#shutdownMenuButton')) $('#shutdownMenuButton').hidden = authState.role !== 'admin';
+  if ($('#roleReadonlyNote')) $('#roleReadonlyNote').hidden = authState.role !== 'viewer';
   try {
     await loadState();
     if (typeof loadEncodingCapabilities === 'function') await loadEncodingCapabilities();
@@ -545,6 +556,7 @@ function leaveConsole() {
   if (!authState.authenticated && $('#consoleApp').hidden && !authState.resolving) return;
   authState.authenticated = false;
   authState.username = '';
+  authState.role = '';
   authState.resolving = false;
   state = null;
   monitorPollPending = false;
@@ -561,6 +573,7 @@ function leaveConsole() {
   setUserMenuOpen(false);
   $('#currentUsername').textContent = '';
   $('#consoleApp').hidden = true;
+  if ($('#consoleApp').dataset) delete $('#consoleApp').dataset.role;
   $('#authLoadingView').hidden = true;
   $('#loginView').hidden = false;
   $('#loginPassword').value = '';
@@ -586,7 +599,8 @@ async function resolveSession() {
   error.hidden = true;
   try {
     const session = await api('/api/auth/session');
-    if (session.authenticated) await enterConsole(session.username);
+    updateLoginSessionPolicy(session.sessionTtlMs);
+    if (session.authenticated) await enterConsole(session.username, session.role);
     else leaveConsole();
   } catch {
     leaveConsole();
@@ -614,8 +628,9 @@ async function submitLogin(event) {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     });
+    updateLoginSessionPolicy(session.sessionTtlMs);
     $('#loginPassword').value = '';
-    await enterConsole(session.username);
+    await enterConsole(session.username, session.role);
   } catch (loginError) {
     $('#loginPassword').value = '';
     error.textContent = loginError.message || '\u7528\u6237\u540d\u6216\u5bc6\u7801\u9519\u8bef';
@@ -652,6 +667,141 @@ function escapeHtml(value) {
     '"': '&quot;',
     "'": '&#39;',
   }[ch]));
+}
+
+function roleLabel(role) {
+  return ({ admin: '管理员', operator: '操作员', viewer: '观察员' })[role] || role;
+}
+
+function updateLoginSessionPolicy(sessionTtlMs) {
+  const durationMinutes = Math.max(1, Math.round(Number(sessionTtlMs) / 60_000));
+  if (!Number.isFinite(durationMinutes)) return;
+  const duration = durationMinutes < 60
+    ? `${durationMinutes} 分钟`
+    : durationMinutes % 60
+      ? `${Math.floor(durationMinutes / 60)} 小时 ${durationMinutes % 60} 分钟`
+      : `${durationMinutes / 60} 小时`;
+  $('#loginSessionPolicy').textContent = `无操作 ${duration} 后自动退出`;
+}
+
+function localDateTime(value) {
+  if (!value) return '从未登录';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN');
+}
+
+async function loadSecuritySessions() {
+  const result = await api('/api/auth/sessions');
+  const body = $('#securitySessionsBody');
+  body.innerHTML = result.sessions.length ? result.sessions.map(item => `
+    <tr>
+      <td>${escapeHtml(item.username)}${item.current ? '（当前）' : ''}<small>${escapeHtml(roleLabel(item.role))}</small></td>
+      <td>${escapeHtml(localDateTime(item.createdAt))}</td>
+      <td>${escapeHtml(localDateTime(item.lastSeenAt))}</td>
+      <td>${escapeHtml(item.ip || '—')}</td>
+      <td>${item.current ? '<span>当前会话</span>' : `<button class="danger" type="button" data-revoke-session="${escapeHtml(item.id)}">撤销</button>`}</td>
+    </tr>`).join('') : '<tr><td colspan="5">暂无活动会话</td></tr>';
+  $('#revokeOtherSessionsBtn').disabled = result.sessions.filter(item => !item.current).length === 0;
+}
+
+function renderSecurityUsers(users) {
+  const currentUser = authState.username;
+  $('#securityUsersBody').innerHTML = users.map(user => `
+    <tr data-user-id="${escapeHtml(user.id)}">
+      <td>${escapeHtml(user.username)}${user.username === currentUser ? '（当前）' : ''}</td>
+      <td><select aria-label="${escapeHtml(user.username)}的角色" data-user-role="${escapeHtml(user.id)}"${user.username === currentUser ? ' disabled' : ''}>
+        <option value="admin"${user.role === 'admin' ? ' selected' : ''}>管理员</option>
+        <option value="operator"${user.role === 'operator' ? ' selected' : ''}>操作员</option>
+        <option value="viewer"${user.role === 'viewer' ? ' selected' : ''}>观察员</option>
+      </select></td>
+      <td><label class="security-inline-toggle"><input type="checkbox" data-user-enabled="${escapeHtml(user.id)}"${user.enabled ? ' checked' : ''}${user.username === currentUser ? ' disabled' : ''}>启用</label></td>
+      <td>${escapeHtml(localDateTime(user.lastLoginAt))}</td>
+      <td>${user.username === currentUser ? '<span>当前账户</span>' : `<button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">删除</button>`}</td>
+    </tr>`).join('');
+  const select = $('#resetUserSelect');
+  select.innerHTML = users.filter(user => user.username !== currentUser)
+    .map(user => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.username)}</option>`).join('');
+}
+
+async function loadSecuritySettings() {
+  $('#adminSecuritySection').hidden = authState.role !== 'admin';
+  $('#sessionPolicySection').hidden = authState.role !== 'admin';
+  $('#alertPreferencesSection').hidden = authState.role !== 'admin';
+  $('#auditSection').hidden = authState.role !== 'admin';
+  await loadSecuritySessions();
+  if (authState.role !== 'admin') return;
+  const [userResult, policy, auditResult, systemSettings] = await Promise.all([
+    api('/api/auth/users'), api('/api/auth/settings'), api('/api/auth/audit?limit=100'), api('/api/system-settings'),
+  ]);
+  renderSecurityUsers(userResult.users);
+  $('#sessionPolicyForm').elements.sessionTtlMs.value = String(policy.sessionTtlMs);
+  $('#alertPreferencesForm').elements.lowBitrateWarningPercent.value = String(
+    systemSettings.settings.lowBitrateWarningPercent || BITRATE_SHORTFALL_WARNING_PERCENT,
+  );
+  $('#securityAuditBody').innerHTML = auditResult.entries.map(item => `
+    <tr><td>${escapeHtml(localDateTime(item.at))}</td><td>${escapeHtml(item.actor)}</td>
+    <td>${escapeHtml(item.action)}</td><td>${escapeHtml(JSON.stringify(item.details || {}))}</td></tr>`).join('')
+    || '<tr><td colspan="4">暂无审计记录</td></tr>';
+}
+
+async function refreshSecuritySettings(statusSelector, successMessage, action) {
+  const status = $(statusSelector);
+  status.textContent = '';
+  status.classList.remove('error');
+  try {
+    await action();
+    status.textContent = successMessage;
+    await loadSecuritySettings();
+  } catch (error) {
+    status.textContent = error.message || '操作失败';
+    status.classList.add('error');
+  }
+}
+
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const newPassword = String(form.elements.newPassword.value || '');
+  if (newPassword !== String(form.elements.confirmPassword.value || '')) {
+    $('#passwordChangeStatus').textContent = '两次输入的新密码不一致';
+    $('#passwordChangeStatus').classList.add('error');
+    return;
+  }
+  await refreshSecuritySettings('#passwordChangeStatus', '密码已更新，其他设备的会话已退出', async () => {
+    await api('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword: form.elements.currentPassword.value, newPassword }),
+    });
+    form.reset();
+  });
+}
+
+async function submitUserCreate(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  await refreshSecuritySettings('#userManagementStatus', '用户已添加', async () => {
+    await api('/api/auth/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: form.elements.username.value,
+        password: form.elements.password.value,
+        role: form.elements.role.value,
+      }),
+    });
+    form.reset();
+  });
+}
+
+async function submitUserPasswordReset(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const userId = form.elements.userId.value;
+  await refreshSecuritySettings('#userManagementStatus', '密码已重置，该用户的会话已撤销', async () => {
+    await api(`/api/auth/users/${encodeURIComponent(userId)}/password`, {
+      method: 'POST', body: JSON.stringify({ newPassword: form.elements.newPassword.value }),
+    });
+    form.reset();
+  });
 }
 
 function captureContainerFocus(container) {
@@ -814,6 +964,10 @@ function show(view) {
   }
   if (view === 'devices') loadDevices();
   if (view === 'logs') loadLogs();
+  if (view === 'settings') loadSecuritySettings().catch(error => {
+    $('#sessionsStatus').textContent = error.message || '无法读取安全设置';
+    $('#sessionsStatus').classList.add('error');
+  });
   if (view === 'dashboard') {
     renderSystemStatus();
     loadSystemStatus();
@@ -4035,7 +4189,7 @@ function renderMonitor(monitor) {
       <div class="kv"><span>估算网络丢帧率</span><strong>${escapeHtml(dropRateText)}</strong></div>
       <div class="kv"><span>运行时长</span><strong>${escapeHtml(o.uptime || '00:00:00')}</strong></div>
     </div>
-    ${o.pipelineStatus !== 'fallback' && o.actualBitrateAvailable && transportShortfallPercent >= BITRATE_SHORTFALL_WARNING_PERCENT ? `<p class="error">实际发送低于固定码率 ${transportShortfallPercent.toFixed(1)}%，可能存在带宽不足或传输丢包</p>` : ''}
+    ${o.pipelineStatus !== 'fallback' && o.actualBitrateAvailable && transportShortfallPercent >= bitrateWarningThresholdPercent() ? `<p class="error">实际发送低于固定码率 ${transportShortfallPercent.toFixed(1)}%，可能存在带宽不足或传输丢包</p>` : ''}
     ${encoderWarning ? `<p class="warning">编码性能不足，当前速度 ${encoderSpeed.toFixed(2)}x</p>` : ''}
     ${o.pipelineStatus === 'fallback' ? `<p class="warning">${escapeHtml(o.pipelineMessage || '输入信号不可用，正在推送黑屏和静音并等待恢复')}</p>` : ''}
     <div class="output-chart-wrap">
@@ -4454,7 +4608,7 @@ function renderMonitorDetail(output, range = {}, stopped = false) {
     ? `${formatDateTimeLabel(range.from)} 至 ${formatDateTimeLabel(range.to)}`
     : formatMonitorRange(monitorDetailState.rangeSec || 900);
   const statusText = stopped || status === 'stopped' ? '已停止' : status === 'disabled' ? '已禁用' : status;
-  const bandwidthWarning = output.pipelineStatus !== 'fallback' && output.actualBitrateAvailable && transportShortfallPercent >= BITRATE_SHORTFALL_WARNING_PERCENT
+  const bandwidthWarning = output.pipelineStatus !== 'fallback' && output.actualBitrateAvailable && transportShortfallPercent >= bitrateWarningThresholdPercent()
     ? `实际发送低于固定码率 ${transportShortfallPercent.toFixed(1)}%，可能存在带宽不足或传输丢包`
     : '';
   const encoderWarningText = encoderWarning
@@ -6370,6 +6524,60 @@ $('#userMenuButton').addEventListener('click', event => {
   setUserMenuOpen($('#userMenu').hidden);
 });
 $('#logoutButton').addEventListener('click', logout);
+$('#changePasswordForm').addEventListener('submit', submitPasswordChange);
+$('#createUserForm').addEventListener('submit', submitUserCreate);
+$('#resetUserPasswordForm').addEventListener('submit', submitUserPasswordReset);
+$('#sessionPolicyForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  await refreshSecuritySettings('#sessionPolicyStatus', '会话超时时间已保存', async () => {
+    await api('/api/auth/settings', {
+      method: 'PUT', body: JSON.stringify({ sessionTtlMs: Number(form.elements.sessionTtlMs.value) }),
+    });
+  });
+});
+$('#alertPreferencesForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  await refreshSecuritySettings('#alertPreferencesStatus', '告警阈值已保存', async () => {
+    await api('/api/system-settings', {
+      method: 'PUT', body: JSON.stringify({
+        lowBitrateWarningPercent: Number(form.elements.lowBitrateWarningPercent.value),
+      }),
+    });
+    if (state && state.settings) {
+      state.settings.lowBitrateWarningPercent = Number(form.elements.lowBitrateWarningPercent.value);
+    }
+  });
+});
+$('#revokeOtherSessionsBtn').addEventListener('click', () => refreshSecuritySettings(
+  '#sessionsStatus', '其他会话已退出', () => api('/api/auth/sessions', { method: 'DELETE' }),
+));
+$('#securitySessionsBody').addEventListener('click', event => {
+  const button = event.target.closest('[data-revoke-session]');
+  if (!button) return;
+  refreshSecuritySettings('#sessionsStatus', '会话已撤销', () => api(
+    `/api/auth/sessions/${encodeURIComponent(button.dataset.revokeSession)}`, { method: 'DELETE' },
+  ));
+});
+$('#securityUsersBody').addEventListener('change', event => {
+  const roleControl = event.target.closest('[data-user-role]');
+  const enabledControl = event.target.closest('[data-user-enabled]');
+  const control = roleControl || enabledControl;
+  if (!control) return;
+  const body = roleControl ? { role: roleControl.value } : { enabled: enabledControl.checked };
+  refreshSecuritySettings('#userManagementStatus', '用户权限已更新', () => api(
+    `/api/auth/users/${encodeURIComponent(control.dataset.userRole || control.dataset.userEnabled)}`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  ));
+});
+$('#securityUsersBody').addEventListener('click', event => {
+  const button = event.target.closest('[data-delete-user]');
+  if (!button || !window.confirm('删除该用户并撤销其全部会话？')) return;
+  refreshSecuritySettings('#userManagementStatus', '用户已删除', () => api(
+    `/api/auth/users/${encodeURIComponent(button.dataset.deleteUser)}`, { method: 'DELETE' },
+  ));
+});
 $('#shutdownMenuButton').addEventListener('click', () => {
   setUserMenuOpen(false);
   const dialog = $('#systemShutdownDialog');

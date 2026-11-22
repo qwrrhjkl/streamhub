@@ -45,6 +45,7 @@ function defaultState() {
       srtPort: 10081,
       metricsPort: 18081,
       restoreOnBoot: false,
+      lowBitrateWarningPercent: 30,
     },
     monitorDisplay: {
       dropBaselines: {},

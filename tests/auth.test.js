@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
   SESSION_TTL_MS,
@@ -96,4 +99,45 @@ test('cookie helpers parse, issue, and expire only the named session cookie', ()
   assert.match(expired, /^streamhub_session=;/);
   assert.match(expired, /Max-Age=0/);
   assert.doesNotMatch(expired, /Secure/);
+});
+
+test('users have fixed roles, passwords are changed securely, and the last admin is protected', () => {
+  const auth = createAuthManager({ username: 'admin', password: 'heroesports' });
+  const admin = auth.login({ username: 'admin', password: 'heroesports' });
+  const observer = auth.createUser({ username: 'observer', password: 'a-secure-password', role: 'viewer' }, 'admin');
+  const observerLogin = auth.login({ username: 'observer', password: 'a-secure-password' });
+
+  assert.equal(observer.role, 'viewer');
+  assert.equal(observerLogin.role, 'viewer');
+  assert.throws(() => auth.updateUser(auth.listUsers()[0].id, { role: 'invalid' }), /角色无效/);
+  assert.throws(() => auth.deleteUser(auth.listUsers()[0].id), /至少需要保留一个/);
+
+  const adminSecondSession = auth.login({ username: 'admin', password: 'heroesports' });
+  auth.changePassword(admin.token, 'heroesports', 'an-even-safer-password');
+  assert.equal(auth.resolve(adminSecondSession.token), null);
+  assert.equal(auth.resolve(admin.token).username, 'admin');
+  assert.equal(auth.login({ username: 'admin', password: 'heroesports' }).ok, false);
+  assert.equal(auth.login({ username: 'admin', password: 'an-even-safer-password' }).ok, true);
+});
+
+test('idle session timeout refreshes on activity and auth data persists as password hashes', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'streamhub-auth-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'auth.json');
+  let now = 1_000;
+  const auth = createAuthManager({ username: 'admin', password: 'bootstrap-password', now: () => now, filePath });
+  auth.updateSettings({ sessionTtlMs: 15 * 60 * 1000 }, 'admin');
+  const login = auth.login({ username: 'admin', password: 'bootstrap-password' });
+  now += 14 * 60 * 1000;
+  assert.equal(auth.resolve(login.token).username, 'admin');
+  now += 14 * 60 * 1000;
+  assert.equal(auth.resolve(login.token).username, 'admin');
+  now += 16 * 60 * 1000;
+  assert.equal(auth.resolve(login.token), null);
+
+  const persisted = fs.readFileSync(filePath, 'utf8');
+  assert.doesNotMatch(persisted, /bootstrap-password/);
+  const reloaded = createAuthManager({ filePath });
+  assert.equal(reloaded.getSettings().sessionTtlMs, 15 * 60 * 1000);
+  assert.equal(reloaded.login({ username: 'admin', password: 'bootstrap-password' }).ok, true);
 });

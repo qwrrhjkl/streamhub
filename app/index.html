@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StreamHub 中文直播控制台</title>
   <link rel="icon" type="image/png" href="/assets/streamhub-logo.png">
-  <link rel="stylesheet" href="/styles.css?v=20261119-input-preview-audio-meter-v3">
+  <link rel="stylesheet" href="/styles.css?v=20261122-auth-roles-v1">
 </head>
 <body>
   <main class="auth-loading-view" id="authLoadingView" role="status" aria-live="polite">
@@ -27,7 +27,8 @@
     <form class="login-card" id="loginForm" novalidate>
       <p class="login-eyebrow">安全访问</p>
       <h1>登录控制台</h1>
-      <p class="login-intro">使用管理员账户继续</p>
+      <p class="login-intro">使用已授权账户继续</p>
+      <p class="login-session-policy" id="loginSessionPolicy" role="status">正在读取会话策略…</p>
       <label for="loginUsername">用户名</label>
       <input id="loginUsername" name="username" autocomplete="username" placeholder="请输入用户名" required>
       <label for="loginPassword">密码</label>
@@ -112,6 +113,7 @@
       </div>
     </header>
     <section class="content">
+      <p class="role-readonly-note" id="roleReadonlyNote" role="note" hidden>当前账户为观察员，只能查看运行数据，无法修改配置或启停推流任务。</p>
       <section class="view active" id="view-dashboard">
         <div class="dashboard-command-head">
           <div>
@@ -616,9 +618,72 @@
             <h1>设置</h1>
           </div>
         </div>
-        <div class="settings-empty" role="status">
-          <i data-lucide="settings" aria-hidden="true"></i>
-          <strong>设置项待添加</strong>
+        <div class="security-workspace">
+          <section class="security-section">
+            <header><h2>账户安全</h2><p>更新当前账户凭据并管理已登录设备。</p></header>
+            <form class="security-form" id="changePasswordForm">
+              <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+              <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required><small>至少 12 个字符。</small></label>
+              <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required></label>
+              <button class="primary" type="submit">修改密码</button>
+              <p class="field-status" id="passwordChangeStatus" role="status" aria-live="polite"></p>
+            </form>
+            <div class="security-subsection">
+              <div class="security-subsection-head"><div><h3>登录会话</h3><p>会话在一段时间没有活动后自动失效。</p></div><button id="revokeOtherSessionsBtn" type="button">退出其他会话</button></div>
+              <div class="table-wrap"><table><thead><tr><th>账户</th><th>登录时间</th><th>最近活动</th><th>来源地址</th><th>操作</th></tr></thead><tbody id="securitySessionsBody"></tbody></table></div>
+              <p class="field-status" id="sessionsStatus" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <section class="security-section admin-security-section" id="adminSecuritySection" hidden>
+            <header><h2>用户与权限</h2><p>按工作职责分配最小必要权限。角色变更即时生效。</p></header>
+            <form class="security-form user-create-form" id="createUserForm">
+              <label>用户名<input name="username" autocomplete="off" minlength="3" maxlength="32" required></label>
+              <label>初始密码<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+              <label>角色<select name="role"><option value="operator">操作员</option><option value="viewer">观察员</option><option value="admin">管理员</option></select></label>
+              <button class="primary" type="submit">添加用户</button>
+            </form>
+            <p class="field-status" id="userManagementStatus" role="status" aria-live="polite"></p>
+            <div class="table-wrap"><table><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="securityUsersBody"></tbody></table></div>
+            <form class="security-form password-reset-form" id="resetUserPasswordForm">
+              <label>重置账户<select name="userId" id="resetUserSelect" required></select></label>
+              <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label>
+              <button type="submit">重置密码</button>
+            </form>
+          </section>
+
+          <section class="security-section admin-security-section" id="sessionPolicySection" hidden>
+            <header><h2>会话策略</h2><p>修改后立即应用于现有登录会话。</p></header>
+            <form class="security-form session-policy-form" id="sessionPolicyForm">
+              <label>无操作超时
+                <select name="sessionTtlMs">
+                  <option value="900000">15 分钟</option><option value="1800000">30 分钟</option>
+                  <option value="3600000">1 小时</option><option value="7200000">2 小时</option>
+                  <option value="14400000">4 小时</option><option value="28800000">8 小时</option>
+                  <option value="43200000">12 小时</option><option value="86400000">24 小时</option>
+                </select>
+              </label>
+              <button class="primary" type="submit">保存超时设置</button>
+              <p class="field-status" id="sessionPolicyStatus" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="security-section admin-security-section" id="alertPreferencesSection" hidden>
+            <header><h2>告警偏好</h2><p>设置实际输出码率低于目标码率时显示告警的比例。</p></header>
+            <form class="security-form alert-preferences-form" id="alertPreferencesForm">
+              <label>低码率告警阈值（%）
+                <input name="lowBitrateWarningPercent" type="number" min="10" max="70" step="1" value="30" required>
+                <small>默认 30%；有效范围 10% 至 70%。</small>
+              </label>
+              <button class="primary" type="submit">保存告警设置</button>
+              <p class="field-status" id="alertPreferencesStatus" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="security-section admin-security-section" id="auditSection" hidden>
+            <header><h2>安全审计</h2><p>保留最近 1,000 条认证和账户管理事件。</p></header>
+            <div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>事件</th><th>详情</th></tr></thead><tbody id="securityAuditBody"></tbody></table></div>
+          </section>
         </div>
       </section>
 
@@ -860,6 +925,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/assets/lucide.min.js?v=20260815-ui-system"></script>
-  <script src="/app.js?v=20261120-preview-stability-v1"></script>
+  <script src="/app.js?v=20261122-auth-roles-v1"></script>
 </body>
 </html>
