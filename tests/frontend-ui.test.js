@@ -77,6 +77,53 @@ test('approved A5 login markup gates the console and exposes an accessible user 
   assert.doesNotMatch(html, /注册|连接 IP|LIVE OPERATIONS GATEWAY|SYSTEM READY|CONTROL PLANE ONLINE/);
 });
 
+test('settings are grouped into tabs and the security audit feature is absent', () => {
+  for (const id of [
+    'settingsTabAccount', 'settingsTabUsers', 'settingsTabSystem', 'settingsTabNetwork', 'settingsTabStorage',
+    'settingsTabLogs', 'settingsTabAlerts', 'settingsTabUpdates', 'settingsPanelAccount', 'settingsPanelUsers',
+    'settingsPanelSystem', 'settingsPanelNetwork', 'settingsPanelStorage', 'settingsPanelLogs', 'settingsPanelAlerts', 'settingsPanelUpdates',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `${id} should exist`);
+  }
+  assert.match(html, /data-settings-tab="users"[^>]+hidden/);
+  assert.match(html, /id="sessionPolicySection"/);
+  assert.doesNotMatch(html, /安全审计|securityAuditBody|id="auditSection"/);
+  assert.doesNotMatch(app, /api\/auth\/audit|auditResult|securityAuditBody/);
+  assert.match(css, /\.security-form label\{[^}]*grid-template-rows:18px 38px 16px/);
+});
+
+test('settings tabs switch panels and non-admin roles stay in the account panel', () => {
+  const nodes = {};
+  for (const key of ['account', 'users', 'system', 'network', 'storage', 'logs', 'alerts', 'updates']) {
+    const button = {
+      hidden: key !== 'account',
+      selected: false,
+      classList: { toggle(_name, selected) { button.selected = selected; } },
+      setAttribute(name, value) { if (name === 'aria-selected') button.ariaSelected = value; },
+    };
+    const panel = { hidden: false };
+    nodes[`[data-settings-tab="${key}"]`] = button;
+    nodes[`#settingsPanel${key[0].toUpperCase()}${key.slice(1)}`] = panel;
+  }
+  const context = appFunctions(['setSettingsTab'], {
+    authState: { role: 'admin' },
+    $: selector => nodes[selector],
+  });
+
+  context.setSettingsTab('alerts');
+  assert.equal(nodes['#settingsPanelAlerts'].hidden, false);
+  assert.equal(nodes['[data-settings-tab="alerts"]'].ariaSelected, 'true');
+  assert.equal(nodes['#settingsPanelAccount'].hidden, true);
+
+  context.authState.role = 'viewer';
+  context.setSettingsTab('users');
+  assert.equal(nodes['#settingsPanelAccount'].hidden, false);
+  assert.equal(nodes['#settingsPanelUsers'].hidden, true);
+  context.setSettingsTab('system');
+  assert.equal(nodes['#settingsPanelSystem'].hidden, false);
+  assert.equal(nodes['#settingsPanelAccount'].hidden, true);
+});
+
 test('approved A5 login styling is centered, rounded, responsive, and keyboard visible', () => {
   assert.match(css, /\.login-view\{[^}]*min-height:100vh[^}]*place-items:center[^}]*background-color:#d8e7e9/);
   assert.match(css, /\.login-card\{[^}]*width:min\(440px,calc\(100% - 34px\)\)[^}]*border-radius:18px/);

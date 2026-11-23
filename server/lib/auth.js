@@ -6,7 +6,6 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_TTL_OPTIONS = [15, 30, 60, 120, 240, 480, 720, 1440].map(minutes => minutes * 60 * 1000);
 const FAILURE_WINDOW_MS = 60 * 1000;
 const MAX_FAILURES = 5;
-const MAX_AUDIT_ENTRIES = 1000;
 const COOKIE_NAME = 'streamhub_session';
 const ROLES = ['admin', 'operator', 'viewer'];
 const ROLE_LABELS = { admin: '管理员', operator: '操作员', viewer: '观察员' };
@@ -51,7 +50,7 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
   const createToken = tokenFactory || (() => crypto.randomBytes(32).toString('base64url'));
   const sessions = new Map();
   const failuresByIp = new Map();
-  let data = { sessionTtlMs: SESSION_TTL_MS, users: [], audit: [] };
+  let data = { sessionTtlMs: SESSION_TTL_MS, users: [] };
 
   if (filePath && fs.existsSync(filePath)) {
     try {
@@ -62,7 +61,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
             ? Number(parsed.sessionTtlMs)
             : SESSION_TTL_MS,
           users: parsed.users.filter(user => user && typeof user.username === 'string' && user.passwordHash),
-          audit: Array.isArray(parsed.audit) ? parsed.audit.slice(-MAX_AUDIT_ENTRIES) : [],
         };
       }
     } catch (error) {
@@ -93,18 +91,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
     fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(tmp, filePath);
     try { fs.chmodSync(filePath, 0o600); } catch {}
-  }
-
-  function audit(action, actor = 'system', details = {}) {
-    data.audit.push({
-      id: crypto.randomUUID(),
-      at: new Date(Number(now())).toISOString(),
-      actor: String(actor || 'system'),
-      action: String(action),
-      details,
-    });
-    if (data.audit.length > MAX_AUDIT_ENTRIES) data.audit = data.audit.slice(-MAX_AUDIT_ENTRIES);
-    persist();
   }
 
   function findUserById(id) {
@@ -169,7 +155,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       if (!valid) {
         failures.push(currentTime);
         failuresByIp.set(clientIp, failures);
-        audit('login.failed', String(suppliedUsername || 'unknown').slice(0, 32), { ip: clientIp });
         return { ...INVALID_LOGIN };
       }
 
@@ -188,7 +173,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       sessions.set(token, session);
       user.lastLoginAt = new Date(currentTime).toISOString();
       persist();
-      audit('login.succeeded', user.username, { ip: clientIp });
       return { ok: true, token, username: user.username, role: user.role, expiresAt: session.expiresAt };
     },
 
@@ -201,7 +185,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       const user = findUserById(session.userId);
       if (!user || user.enabled === false || session.expiresAt <= currentTime) {
         sessions.delete(key);
-        if (session.expiresAt <= currentTime) audit('session.expired', session.username);
         return null;
       }
       session.username = user.username;
@@ -212,17 +195,14 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
     },
 
     logout(token) {
-      const session = sessionFor(token);
-      const removed = token ? sessions.delete(String(token)) : false;
-      if (removed && session) audit('logout', session.username);
-      return removed;
+      return token ? sessions.delete(String(token)) : false;
     },
 
     listUsers() {
       return data.users.map(publicUser).sort((left, right) => left.username.localeCompare(right.username));
     },
 
-    createUser({ username: suppliedUsername, password: suppliedPassword, role = 'operator' } = {}, actor = 'system') {
+    createUser({ username: suppliedUsername, password: suppliedPassword, role = 'operator' } = {}) {
       const normalized = String(suppliedUsername || '').trim();
       if (!/^[\p{L}\p{N}._-]{3,32}$/u.test(normalized)) {
         const error = new Error('用户名须为 3 至 32 个字母、数字、点、下划线或连字符');
@@ -245,11 +225,11 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
         enabled: true, createdAt: new Date(Number(now())).toISOString(), lastLoginAt: '',
       };
       data.users.push(user);
-      audit('user.created', actor, { username: normalized, role });
+      persist();
       return publicUser(user);
     },
 
-    updateUser(id, patch, actor = 'system') {
+    updateUser(id, patch) {
       const user = findUserById(id);
       if (!user) {
         const error = new Error('用户不存在');
@@ -269,11 +249,10 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       user.enabled = enabled;
       persist();
       if (!enabled) invalidateUserSessions(user.id);
-      audit('user.updated', actor, { username: user.username, role, enabled });
       return publicUser(user);
     },
 
-    deleteUser(id, actor = 'system') {
+    deleteUser(id) {
       const user = findUserById(id);
       if (!user) {
         const error = new Error('用户不存在');
@@ -283,11 +262,11 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       ensureLastAdminRemains(data.users.filter(item => item.id !== user.id));
       data.users = data.users.filter(item => item.id !== user.id);
       invalidateUserSessions(user.id);
-      audit('user.deleted', actor, { username: user.username });
+      persist();
       return { ok: true };
     },
 
-    resetPassword(id, newPassword, actor = 'system') {
+    resetPassword(id, newPassword) {
       const user = findUserById(id);
       if (!user) {
         const error = new Error('用户不存在');
@@ -297,7 +276,7 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       validateNewPassword(newPassword);
       user.passwordHash = hashPassword(newPassword);
       invalidateUserSessions(user.id);
-      audit('user.password_reset', actor, { username: user.username });
+      persist();
       return { ok: true };
     },
 
@@ -312,7 +291,7 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       validateNewPassword(newPassword);
       user.passwordHash = hashPassword(newPassword);
       invalidateUserSessions(user.id, String(token));
-      audit('password.changed', user.username);
+      persist();
       return { ok: true };
     },
 
@@ -346,7 +325,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
         throw error;
       }
       sessions.delete(entry[0]);
-      audit('session.revoked', actor.username, { username: entry[1].username });
       return { ok: true, current: entry[0] === String(actorToken) };
     },
 
@@ -360,7 +338,6 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
           count += 1;
         }
       }
-      audit('sessions.revoked_others', actor.username, { count });
       return { count };
     },
 
@@ -368,7 +345,7 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       return { sessionTtlMs: data.sessionTtlMs };
     },
 
-    updateSettings(patch, actor = 'system') {
+    updateSettings(patch) {
       const sessionTtlMs = Number(patch && patch.sessionTtlMs);
       if (!SESSION_TTL_OPTIONS.includes(sessionTtlMs)) {
         const error = new Error('会话超时时间无效');
@@ -378,15 +355,9 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
       data.sessionTtlMs = sessionTtlMs;
       const currentTime = Number(now());
       for (const session of sessions.values()) session.expiresAt = currentTime + sessionTtlMs;
-      audit('settings.session_timeout_changed', actor, { sessionTtlMs });
+      persist();
       return this.getSettings();
     },
-
-    listAudit(limit = 200) {
-      return data.audit.slice(-Math.min(500, Math.max(1, Number(limit) || 200))).reverse();
-    },
-
-    audit,
   };
 }
 

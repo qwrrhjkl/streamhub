@@ -152,6 +152,7 @@ function createLogManager({
   clearScheduledInterval = clearInterval,
 } = {}) {
   const logDir = path.resolve(rootDir || process.cwd(), 'data', 'logs');
+  let retentionMs = RETENTION_MS;
   let cleanupTimer = null;
   ensureDirectory(logDir);
 
@@ -212,7 +213,7 @@ function createLogManager({
   }
 
   function cleanup() {
-    const cutoff = Number(now()) - RETENTION_MS;
+    const cutoff = Number(now()) - retentionMs;
     const active = activeSet();
     const result = { deleted: [], skippedActive: [], protected: [] };
     const entries = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter(name => parseLogFilename(name)) : [];
@@ -252,6 +253,13 @@ function createLogManager({
     },
     getActiveFiles: activeSet,
     describeFile: (name, metadata) => describeFile(name, metadata, store),
+    setRetentionDays(days) {
+      const value = Number(days);
+      if (!Number.isInteger(value) || value < 1 || value > 90) throw logError('日志保留时间须为 1 至 90 天', 400);
+      retentionMs = value * 24 * 60 * 60 * 1000;
+      return value;
+    },
+    getRetentionDays() { return Math.round(retentionMs / (24 * 60 * 60 * 1000)); },
   };
 }
 

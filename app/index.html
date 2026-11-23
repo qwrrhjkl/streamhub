@@ -618,71 +618,127 @@
             <h1>设置</h1>
           </div>
         </div>
+        <nav class="settings-tabs" role="tablist" aria-label="设置分类">
+          <button class="active" id="settingsTabAccount" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelAccount" data-settings-tab="account">用户账户</button>
+          <button id="settingsTabUsers" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelUsers" data-settings-tab="users" hidden>用户管理</button>
+          <button id="settingsTabSystem" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSystem" data-settings-tab="system">系统信息</button>
+          <button id="settingsTabNetwork" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelNetwork" data-settings-tab="network">网络与服务</button>
+          <button id="settingsTabStorage" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelStorage" data-settings-tab="storage" hidden>存储与录制</button>
+          <button id="settingsTabLogs" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelLogs" data-settings-tab="logs" hidden>日志与维护</button>
+          <button id="settingsTabAlerts" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAlerts" data-settings-tab="alerts" hidden>告警</button>
+          <button id="settingsTabUpdates" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelUpdates" data-settings-tab="updates" hidden>版本与更新</button>
+        </nav>
         <div class="security-workspace">
-          <section class="security-section">
-            <header><h2>账户安全</h2><p>更新当前账户凭据并管理已登录设备。</p></header>
-            <form class="security-form" id="changePasswordForm">
-              <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required></label>
-              <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required><small>至少 12 个字符。</small></label>
-              <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required></label>
-              <button class="primary" type="submit">修改密码</button>
-              <p class="field-status" id="passwordChangeStatus" role="status" aria-live="polite"></p>
-            </form>
-            <div class="security-subsection">
-              <div class="security-subsection-head"><div><h3>登录会话</h3><p>会话在一段时间没有活动后自动失效。</p></div><button id="revokeOtherSessionsBtn" type="button">退出其他会话</button></div>
-              <div class="table-wrap"><table><thead><tr><th>账户</th><th>登录时间</th><th>最近活动</th><th>来源地址</th><th>操作</th></tr></thead><tbody id="securitySessionsBody"></tbody></table></div>
-              <p class="field-status" id="sessionsStatus" role="status" aria-live="polite"></p>
-            </div>
+          <section class="settings-panel" id="settingsPanelAccount" role="tabpanel" aria-labelledby="settingsTabAccount">
+            <section class="security-section">
+              <header><h2>密码</h2><p>更新当前账户的登录凭据。</p></header>
+              <form class="security-form" id="changePasswordForm">
+                <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+                <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required><small>至少 12 个字符。</small></label>
+                <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required></label>
+                <button class="primary" type="submit">修改密码</button>
+                <p class="field-status" id="passwordChangeStatus" role="status" aria-live="polite"></p>
+              </form>
+              <div class="security-subsection">
+                <div class="security-subsection-head"><div><h3>已登录设备</h3><p>退出不再使用的设备；会话超时时间由管理员在用户管理中设置。</p></div><button id="revokeOtherSessionsBtn" type="button">退出其他会话</button></div>
+                <div class="table-wrap"><table><thead><tr><th>账户</th><th>登录时间</th><th>最近活动</th><th>来源地址</th><th>操作</th></tr></thead><tbody id="securitySessionsBody"></tbody></table></div>
+                <p class="field-status" id="sessionsStatus" role="status" aria-live="polite"></p>
+              </div>
+            </section>
           </section>
 
-          <section class="security-section admin-security-section" id="adminSecuritySection" hidden>
-            <header><h2>用户与权限</h2><p>按工作职责分配最小必要权限。角色变更即时生效。</p></header>
-            <form class="security-form user-create-form" id="createUserForm">
-              <label>用户名<input name="username" autocomplete="off" minlength="3" maxlength="32" required></label>
-              <label>初始密码<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
-              <label>角色<select name="role"><option value="operator">操作员</option><option value="viewer">观察员</option><option value="admin">管理员</option></select></label>
-              <button class="primary" type="submit">添加用户</button>
-            </form>
-            <p class="field-status" id="userManagementStatus" role="status" aria-live="polite"></p>
-            <div class="table-wrap"><table><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="securityUsersBody"></tbody></table></div>
-            <form class="security-form password-reset-form" id="resetUserPasswordForm">
-              <label>重置账户<select name="userId" id="resetUserSelect" required></select></label>
-              <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label>
-              <button type="submit">重置密码</button>
-            </form>
+          <section class="settings-panel" id="settingsPanelUsers" role="tabpanel" aria-labelledby="settingsTabUsers" hidden>
+            <section class="security-section admin-security-section" id="adminSecuritySection" hidden>
+              <header><h2>用户与权限</h2><p>按工作职责分配最小必要权限。角色变更即时生效。</p></header>
+              <form class="security-form user-create-form" id="createUserForm">
+                <label>用户名<input name="username" autocomplete="off" minlength="3" maxlength="32" required></label>
+                <label>初始密码<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+                <label>角色<select name="role"><option value="operator">操作员</option><option value="viewer">观察员</option><option value="admin">管理员</option></select></label>
+                <button class="primary" type="submit">添加用户</button>
+              </form>
+              <p class="field-status" id="userManagementStatus" role="status" aria-live="polite"></p>
+              <div class="table-wrap"><table><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="securityUsersBody"></tbody></table></div>
+              <form class="security-form password-reset-form" id="resetUserPasswordForm">
+                <label>重置账户<select name="userId" id="resetUserSelect" required></select></label>
+                <label>新密码<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label>
+                <button type="submit">重置密码</button>
+              </form>
+
+              <div class="security-subsection" id="sessionPolicySection">
+                <header><h3>会话超时</h3><p>修改后立即应用于现有登录会话，也会显示在登录页面。</p></header>
+                <form class="security-form session-policy-form" id="sessionPolicyForm">
+                  <label>无操作超时
+                    <select name="sessionTtlMs">
+                      <option value="900000">15 分钟</option><option value="1800000">30 分钟</option>
+                      <option value="3600000">1 小时</option><option value="7200000">2 小时</option>
+                      <option value="14400000">4 小时</option><option value="28800000">8 小时</option>
+                      <option value="43200000">12 小时</option><option value="86400000">24 小时</option>
+                    </select>
+                  </label>
+                  <button class="primary" type="submit">保存超时设置</button>
+                  <p class="field-status" id="sessionPolicyStatus" role="status" aria-live="polite"></p>
+                </form>
+              </div>
+            </section>
           </section>
 
-          <section class="security-section admin-security-section" id="sessionPolicySection" hidden>
-            <header><h2>会话策略</h2><p>修改后立即应用于现有登录会话。</p></header>
-            <form class="security-form session-policy-form" id="sessionPolicyForm">
-              <label>无操作超时
-                <select name="sessionTtlMs">
-                  <option value="900000">15 分钟</option><option value="1800000">30 分钟</option>
-                  <option value="3600000">1 小时</option><option value="7200000">2 小时</option>
-                  <option value="14400000">4 小时</option><option value="28800000">8 小时</option>
-                  <option value="43200000">12 小时</option><option value="86400000">24 小时</option>
-                </select>
-              </label>
-              <button class="primary" type="submit">保存超时设置</button>
-              <p class="field-status" id="sessionPolicyStatus" role="status" aria-live="polite"></p>
-            </form>
+          <section class="settings-panel" id="settingsPanelSystem" role="tabpanel" aria-labelledby="settingsTabSystem" hidden>
+            <section class="security-section"><header><h2>系统信息</h2><p>运行环境与 StreamHub 服务版本。</p></header>
+              <dl class="settings-facts" id="systemInfoFacts"><div><dt>正在读取</dt><dd>—</dd></div></dl>
+              <div class="settings-status-line" id="systemInfoStatus" role="status"></div>
+            </section>
           </section>
 
-          <section class="security-section admin-security-section" id="alertPreferencesSection" hidden>
-            <header><h2>告警偏好</h2><p>设置实际输出码率低于目标码率时显示告警的比例。</p></header>
-            <form class="security-form alert-preferences-form" id="alertPreferencesForm">
-              <label>低码率告警阈值（%）
-                <input name="lowBitrateWarningPercent" type="number" min="10" max="70" step="1" value="30" required>
-                <small>默认 30%；有效范围 10% 至 70%。</small>
-              </label>
-              <button class="primary" type="submit">保存告警设置</button>
-              <p class="field-status" id="alertPreferencesStatus" role="status" aria-live="polite"></p>
-            </form>
+          <section class="settings-panel" id="settingsPanelNetwork" role="tabpanel" aria-labelledby="settingsTabNetwork" hidden>
+            <section class="security-section"><header><h2>网络与服务</h2><p>监听端口和当前网卡状态；端口变更需要按部署流程重启服务。</p></header>
+              <dl class="settings-facts" id="networkInfoFacts"><div><dt>正在读取</dt><dd>—</dd></div></dl>
+              <button type="button" data-view="devices" class="jump">打开采集设备诊断</button>
+            </section>
           </section>
 
-          <section class="security-section admin-security-section" id="auditSection" hidden>
-            <header><h2>安全审计</h2><p>保留最近 1,000 条认证和账户管理事件。</p></header>
-            <div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>事件</th><th>详情</th></tr></thead><tbody id="securityAuditBody"></tbody></table></div>
+          <section class="settings-panel" id="settingsPanelStorage" role="tabpanel" aria-labelledby="settingsTabStorage" hidden>
+            <section class="security-section"><header><h2>存储与录制</h2><p>查看录制盘容量并设置自动清理期限。</p></header>
+              <dl class="settings-facts" id="storageInfoFacts"><div><dt>正在读取</dt><dd>—</dd></div></dl>
+              <form class="security-form settings-retention-form" id="storageRetentionForm">
+                <label>录制保留时间（天）<input name="recordingRetentionDays" type="number" min="1" max="3650" required><small>仅清理已完成录制，不影响运行中的任务。</small></label>
+                <button class="primary" type="submit">保存策略</button>
+                <p class="field-status" id="storageStatus" role="status" aria-live="polite"></p>
+              </form>
+              <button class="danger" id="cleanupStorageBtn" type="button">清理已过期录制和日志</button>
+            </section>
+          </section>
+
+          <section class="settings-panel" id="settingsPanelLogs" role="tabpanel" aria-labelledby="settingsTabLogs" hidden>
+            <section class="security-section"><header><h2>日志与维护</h2><p>日志会按保留期限自动清理，当前 RTMP 基础日志仍由系统保护。</p></header>
+              <form class="security-form settings-retention-form" id="logRetentionForm">
+                <label>日志保留时间（天）<input name="logRetentionDays" type="number" min="1" max="90" required><small>范围 1 至 90 天。</small></label>
+                <button class="primary" type="submit">保存策略</button>
+                <p class="field-status" id="logRetentionStatus" role="status" aria-live="polite"></p>
+              </form>
+              <p class="settings-note">日志下载与单项删除仍可在“任务与平台日志”页面操作。</p>
+            </section>
+          </section>
+
+          <section class="settings-panel" id="settingsPanelAlerts" role="tabpanel" aria-labelledby="settingsTabAlerts" hidden>
+            <section class="security-section admin-security-section" id="alertPreferencesSection" hidden>
+              <header><h2>告警偏好</h2><p>设置实际输出码率低于目标码率时显示告警的比例。</p></header>
+              <form class="security-form alert-preferences-form" id="alertPreferencesForm">
+                <label>低码率告警阈值（%）
+                  <input name="lowBitrateWarningPercent" type="number" min="10" max="70" step="1" value="30" required>
+                  <small>默认 30%；有效范围 10% 至 70%。</small>
+                </label>
+                <button class="primary" type="submit">保存告警设置</button>
+                <p class="field-status" id="alertPreferencesStatus" role="status" aria-live="polite"></p>
+              </form>
+            </section>
+          </section>
+
+          <section class="settings-panel" id="settingsPanelUpdates" role="tabpanel" aria-labelledby="settingsTabUpdates" hidden>
+            <section class="security-section"><header><h2>版本与更新</h2><p>检查发布版本；更新不会在后台自动重启服务。</p></header>
+              <dl class="settings-facts" id="updateInfoFacts"><div><dt>当前版本</dt><dd>—</dd></div></dl>
+              <button id="checkUpdateBtn" type="button">检查更新</button>
+              <p class="field-status" id="updateStatus" role="status" aria-live="polite"></p>
+            </section>
           </section>
         </div>
       </section>

@@ -137,6 +137,7 @@ test('idle session timeout refreshes on activity and auth data persists as passw
 
   const persisted = fs.readFileSync(filePath, 'utf8');
   assert.doesNotMatch(persisted, /bootstrap-password/);
+  assert.doesNotMatch(persisted, /"audit"/);
   const reloaded = createAuthManager({ filePath });
   assert.equal(reloaded.getSettings().sessionTtlMs, 15 * 60 * 1000);
   assert.equal(reloaded.login({ username: 'admin', password: 'bootstrap-password' }).ok, true);

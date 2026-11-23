@@ -2,6 +2,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const https = require('node:https');
+const net = require('node:net');
 const { promisify } = require('node:util');
 const { URL } = require('node:url');
 const { StreamHubStore, createId } = require('./lib/store');
@@ -46,6 +48,109 @@ const ROOT = process.env.STREAMHUB_ROOT || path.resolve(__dirname, '..');
 const HOST = process.env.STREAMHUB_HOST || '0.0.0.0';
 const PORT = Number(process.env.STREAMHUB_PORT || 18080);
 const execFileAsync = promisify(execFile);
+const VERSION = fs.existsSync(path.join(ROOT, 'VERSION'))
+  ? fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim()
+  : 'unknown';
+
+function storageSnapshot(rootDir, mediaAssets) {
+  const paths = {
+    root: rootDir,
+    recordings: path.join(rootDir, 'data', 'videos'),
+    logs: path.join(rootDir, 'data', 'logs'),
+  };
+  const result = { paths, files: { recordings: 0, logs: 0 }, disk: null };
+  try {
+    const stat = fs.statfsSync(paths.root);
+    const totalBytes = Number(stat.blocks) * Number(stat.bsize);
+    const availableBytes = Number(stat.bavail) * Number(stat.bsize);
+    result.disk = { totalBytes, availableBytes, usedBytes: Math.max(0, totalBytes - availableBytes), usagePercent: totalBytes ? (totalBytes - availableBytes) / totalBytes * 100 : null };
+  } catch {}
+  for (const [key, dir] of [['recordings', paths.recordings], ['logs', paths.logs]]) {
+    try { result.files[key] = fs.readdirSync(dir).reduce((sum, file) => sum + fs.statSync(path.join(dir, file)).size, 0); } catch {}
+  }
+  result.recordings = mediaAssets.list().filter(asset => asset.source === 'recording').length;
+  return result;
+}
+
+function validateRetentionDays(value, label, max = 3650) {
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 1 || days > max) {
+    const error = new Error(`${label}须为 1 至 ${max} 天`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return days;
+}
+
+function cleanupOldRecordings(mediaAssets, manager, retentionDays, now = Date.now) {
+  const cutoff = Number(now()) - retentionDays * 24 * 60 * 60 * 1000;
+  const removed = [];
+  for (const asset of mediaAssets.list().filter(item => item.source === 'recording')) {
+    const createdAt = Date.parse(asset.createdAt || '');
+    if (!Number.isFinite(createdAt) || createdAt >= cutoff) continue;
+    if (typeof manager.isMediaInProgram === 'function' && manager.isMediaInProgram(asset.id)) continue;
+    const state = manager.store && typeof manager.store.getState === 'function' ? manager.store.getState() : {};
+    if ((state.scenes || []).some(scene => Array.isArray(scene.playlist) && scene.playlist.includes(asset.id))) continue;
+    try {
+      mediaAssets.remove(asset.id);
+      for (const job of (state.recordingJobs || []).filter(item => item.assetId === asset.id)) {
+        manager.store.remove('recordingJobs', job.id);
+      }
+      removed.push(asset.id);
+    } catch {}
+  }
+  return { removed, count: removed.length };
+}
+
+function latestPublishedRelease() {
+  return new Promise((resolve, reject) => {
+    const request = https.get('https://api.github.com/repos/qwrrhjkl/streamhub/releases/latest', {
+      headers: { 'user-agent': 'StreamHub-version-check', accept: 'application/vnd.github+json' },
+      timeout: 6000,
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => {
+        if (response.statusCode !== 200) return reject(new Error(`发布服务返回 HTTP ${response.statusCode}`));
+        try {
+          const release = JSON.parse(body);
+          if (!release.tag_name || release.draft || release.prerelease) throw new Error('没有可用的正式发布版本');
+          resolve({ version: String(release.tag_name), url: String(release.html_url || ''), publishedAt: String(release.published_at || '') });
+        } catch (error) { reject(error); }
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error('检查发布版本超时')));
+    request.on('error', reject);
+  });
+}
+
+function compareReleaseVersions(current, latest) {
+  const parse = value => {
+    const match = String(value).match(/(\d+)\.(\d+)\.(\d+)/);
+    return match ? match.slice(1).map(Number) : null;
+  };
+  const left = parse(current);
+  const right = parse(latest);
+  if (!left || !right) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return right[index] > left[index];
+  }
+  return false;
+}
+
+function localPortListening(port) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    const finish = listening => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+}
 
 async function startPoweroffUnit() {
   await execFileAsync('/usr/bin/systemctl', [
@@ -283,8 +388,6 @@ async function handleApi(req, res, url, {
       throw error;
     }
   };
-  const actor = session.username;
-
   if (url.pathname === '/api/auth/password' && req.method === 'POST') {
     const body = await readBody(req);
     auth.changePassword(sessionToken, body.currentPassword, body.newPassword);
@@ -309,7 +412,7 @@ async function handleApi(req, res, url, {
   if (url.pathname === '/api/auth/users' && req.method === 'POST') {
     requireAdmin();
     const body = await readBody(req);
-    return json(res, 201, { user: auth.createUser(body, actor) });
+    return json(res, 201, { user: auth.createUser(body) });
   }
   const userMatch = url.pathname.match(/^\/api\/auth\/users\/([^/]+)$/);
   if (userMatch && req.method === 'PATCH') {
@@ -319,20 +422,20 @@ async function handleApi(req, res, url, {
     if (userId === session.userId && (body.role !== undefined || body.enabled === false)) {
       return json(res, 409, { error: '不能修改当前登录账户的角色或停用状态' });
     }
-    return json(res, 200, { user: auth.updateUser(userId, body, actor) });
+    return json(res, 200, { user: auth.updateUser(userId, body) });
   }
   if (userMatch && req.method === 'DELETE') {
     requireAdmin();
     if (decodeURIComponent(userMatch[1]) === session.userId) {
       return json(res, 409, { error: '不能删除当前登录账户' });
     }
-    return json(res, 200, auth.deleteUser(decodeURIComponent(userMatch[1]), actor));
+    return json(res, 200, auth.deleteUser(decodeURIComponent(userMatch[1])));
   }
   const resetPasswordMatch = url.pathname.match(/^\/api\/auth\/users\/([^/]+)\/password$/);
   if (resetPasswordMatch && req.method === 'POST') {
     requireAdmin();
     const body = await readBody(req);
-    return json(res, 200, auth.resetPassword(decodeURIComponent(resetPasswordMatch[1]), body.newPassword, actor));
+    return json(res, 200, auth.resetPassword(decodeURIComponent(resetPasswordMatch[1]), body.newPassword));
   }
   if (url.pathname === '/api/auth/settings' && req.method === 'GET') {
     requireAdmin();
@@ -341,11 +444,7 @@ async function handleApi(req, res, url, {
   if (url.pathname === '/api/auth/settings' && ['PUT', 'PATCH'].includes(req.method)) {
     requireAdmin();
     const body = await readBody(req);
-    return json(res, 200, auth.updateSettings(body, actor));
-  }
-  if (url.pathname === '/api/auth/audit' && req.method === 'GET') {
-    requireAdmin();
-    return json(res, 200, { entries: auth.listAudit(url.searchParams.get('limit')) });
+    return json(res, 200, auth.updateSettings(body));
   }
   if (url.pathname.startsWith('/api/auth/')) return json(res, 404, { error: 'Not found' });
 
@@ -353,6 +452,7 @@ async function handleApi(req, res, url, {
     const viewerReadable = url.pathname === '/api/state'
       || url.pathname === '/api/monitor'
       || url.pathname === '/api/system-status'
+      || url.pathname === '/api/system-info'
       || url.pathname === '/api/encoding-capabilities'
       || url.pathname === '/api/logs'
       || /^\/api\/reports\//.test(url.pathname);
@@ -363,33 +463,86 @@ async function handleApi(req, res, url, {
   if (session.role === 'operator' && url.pathname === '/api/system/shutdown') {
     return json(res, 403, { error: '只有管理员可以关闭服务' });
   }
-  if (!url.pathname.startsWith('/api/auth/')
-    && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
-    && typeof auth.audit === 'function') {
-    res.once('finish', () => {
-      try {
-        auth.audit(res.statusCode < 400 ? 'operation.succeeded' : 'operation.rejected', actor, {
-          method: req.method,
-          path: url.pathname,
-          status: res.statusCode,
-        });
-      } catch {}
+  if (url.pathname === '/api/system-info' && req.method === 'GET') {
+    const rtmpPort = Number(process.env.STREAMHUB_RTMP_PORT || 1935);
+    const [webListening, rtmpListening] = await Promise.all([
+      localPortListening(port), localPortListening(rtmpPort),
+    ]);
+    return json(res, 200, {
+      version: VERSION,
+      nodeVersion: process.version,
+      platform: process.platform,
+      architecture: process.arch,
+      webPort: port,
+      webListening,
+      rtmpPort,
+      rtmpListening,
+      rtmpHealth: '127.0.0.1:18081',
+      srtPort: 10081,
     });
   }
-
+  if (url.pathname === '/api/system-update-check' && req.method === 'GET') {
+    requireAdmin();
+    try {
+      const release = await latestPublishedRelease();
+      return json(res, 200, {
+        currentVersion: VERSION,
+        latestVersion: release.version,
+        updateAvailable: compareReleaseVersions(VERSION, release.version),
+        releaseUrl: release.url,
+        publishedAt: release.publishedAt,
+      });
+    } catch (error) {
+      return json(res, 503, { error: error.message || '无法连接发布服务' });
+    }
+  }
+  if (url.pathname === '/api/storage' && req.method === 'GET') {
+    requireAdmin();
+    const settings = store.getState().settings || {};
+    return json(res, 200, {
+      ...storageSnapshot(rootDir, mediaAssets),
+      logRetentionDays: Number(settings.logRetentionDays) || 7,
+      recordingRetentionDays: Number(settings.recordingRetentionDays) || 30,
+    });
+  }
+  if (url.pathname === '/api/storage/cleanup' && req.method === 'POST') {
+    requireAdmin();
+    const body = await readBody(req);
+    if (body.confirm !== true) return json(res, 400, { error: '清理操作需要明确确认' });
+    const settings = store.getState().settings || {};
+    const result = cleanupOldRecordings(mediaAssets, manager, Number(settings.recordingRetentionDays) || 30);
+    result.logs = logManager.cleanup();
+    return json(res, 200, { ...result, storage: storageSnapshot(rootDir, mediaAssets) });
+  }
   if (url.pathname === '/api/system-settings') {
     requireAdmin();
-    if (req.method === 'GET') return json(res, 200, { settings: store.getState().settings || {} });
+    if (req.method === 'GET') {
+      const settings = store.getState().settings || {};
+      if (typeof logManager.setRetentionDays === 'function' && Number.isInteger(Number(settings.logRetentionDays))) {
+        try { logManager.setRetentionDays(Number(settings.logRetentionDays)); } catch {}
+      }
+      return json(res, 200, { settings });
+    }
     if (req.method !== 'PUT' && req.method !== 'PATCH') return json(res, 405, { error: 'Method not allowed' });
     const body = await readBody(req);
     const threshold = Number(body.lowBitrateWarningPercent);
     if (!Number.isInteger(threshold) || threshold < 10 || threshold > 70) {
       return json(res, 400, { error: '低码率告警阈值须为 10 至 70 的整数百分比' });
     }
-    const updated = store.update(current => {
-      current.settings = { ...(current.settings || {}), lowBitrateWarningPercent: threshold };
-      return current;
+    const current = store.getState().settings || {};
+    const logRetentionDays = body.logRetentionDays === undefined
+      ? Number(current.logRetentionDays) || 7
+      : validateRetentionDays(body.logRetentionDays, '日志保留时间', 90);
+    const recordingRetentionDays = body.recordingRetentionDays === undefined
+      ? Number(current.recordingRetentionDays) || 30
+      : validateRetentionDays(body.recordingRetentionDays, '录制保留时间');
+    const updated = store.update(currentState => {
+      currentState.settings = {
+        ...(currentState.settings || {}), lowBitrateWarningPercent: threshold, logRetentionDays, recordingRetentionDays,
+      };
+      return currentState;
     });
+    if (typeof logManager.setRetentionDays === 'function') logManager.setRetentionDays(logRetentionDays);
     return json(res, 200, { settings: updated.settings });
   }
 

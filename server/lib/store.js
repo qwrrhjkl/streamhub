@@ -46,6 +46,8 @@ function defaultState() {
       metricsPort: 18081,
       restoreOnBoot: false,
       lowBitrateWarningPercent: 30,
+      logRetentionDays: 7,
+      recordingRetentionDays: 30,
     },
     monitorDisplay: {
       dropBaselines: {},

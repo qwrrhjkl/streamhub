@@ -269,7 +269,7 @@ test('auth endpoints manage users, while viewer sessions cannot write or adminis
     method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' }, body: '{}',
   });
   assert.equal(preview.status, 201);
-  assert.equal(auth.listAudit(20).some(entry => entry.action === 'operation.succeeded' && entry.details.path === '/api/previews'), true);
+  assert.equal((await fetch(`${baseUrl}/api/auth/audit`, { headers: { cookie: adminCookie } })).status, 404);
   const alertSettings = await fetch(`${baseUrl}/api/system-settings`, {
     method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json' },
     body: JSON.stringify({ lowBitrateWarningPercent: 45 }),
@@ -309,6 +309,66 @@ test('auth endpoints manage users, while viewer sessions cannot write or adminis
     method: 'POST', headers: { cookie: viewerCookie, 'content-type': 'application/json' }, body: '{}',
   });
   assert.equal(administer.status, 403);
+});
+
+test('system settings expose service and storage info and require confirmation for cleanup', async t => {
+  const password = 'system-settings-test-password';
+  const auth = createAuthManager({ username: 'admin', password });
+  const oldReferenced = { id: 'media-old-scene', source: 'recording', createdAt: '2020-01-01T00:00:00.000Z' };
+  const oldUnused = { id: 'media-old-unused', source: 'recording', createdAt: '2020-01-01T00:00:00.000Z' };
+  const state = {
+    settings: { lowBitrateWarningPercent: 30, logRetentionDays: 7, recordingRetentionDays: 30 },
+    scenes: [{ id: 'scene-a', playlist: [oldReferenced.id] }],
+    recordingJobs: [{ id: 'job-a', assetId: oldUnused.id }],
+  };
+  let removed = 0;
+  const mediaAssets = {
+    list: () => [oldReferenced, oldUnused],
+    remove(id) { removed += 1; assert.equal(id, oldUnused.id); },
+  };
+  const server = createServer({
+    rootDir: path.resolve(__dirname, '..'), auth,
+    store: {
+      getState: () => state, list: () => [], update(mutator) { mutator(state); return state; },
+      remove(collection, id) { state[collection] = state[collection].filter(item => item.id !== id); },
+    },
+    manager: { monitor: () => ({ outputs: [] }), isMediaInProgram: () => false, store: { getState: () => state, remove(collection, id) { state[collection] = state[collection].filter(item => item.id !== id); } } },
+    mediaAssets,
+    systemStatus: { async snapshot() { return { network: { available: true, interfaces: [{}] }, cpu: { uptimeSec: 3600 } }; } },
+    logManager: { start() {}, stop() {}, list: () => [], cleanup: () => ({ deleted: [], skippedActive: [], protected: [] }), setRetentionDays(days) { this.retentionDays = days; } },
+  });
+  await listen(server);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password }),
+  });
+  const cookie = login.headers.get('set-cookie').split(';', 1)[0];
+  const info = await fetch(`${baseUrl}/api/system-info`, { headers: { cookie } });
+  assert.equal(info.status, 200);
+  assert.equal((await info.json()).nodeVersion, process.version);
+  const storage = await fetch(`${baseUrl}/api/storage`, { headers: { cookie } });
+  assert.equal(storage.status, 200);
+  assert.equal((await storage.json()).recordingRetentionDays, 30);
+  const retention = await fetch(`${baseUrl}/api/system-settings`, {
+    method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ lowBitrateWarningPercent: 30, logRetentionDays: 14, recordingRetentionDays: 90 }),
+  });
+  assert.equal(retention.status, 200);
+  assert.equal(state.settings.logRetentionDays, 14);
+  assert.equal(state.settings.recordingRetentionDays, 90);
+  const denied = await fetch(`${baseUrl}/api/storage/cleanup`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}',
+  });
+  assert.equal(denied.status, 400);
+  assert.equal(removed, 0);
+  const cleaned = await fetch(`${baseUrl}/api/storage/cleanup`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true }),
+  });
+  assert.equal(cleaned.status, 200);
+  assert.equal(removed, 1);
+  assert.deepEqual(state.recordingJobs, []);
 });
 
 test('health, RTMP callbacks, and auth routes stay public while management dependencies stay untouched', async t => {

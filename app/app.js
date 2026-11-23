@@ -408,6 +408,7 @@ const authState = {
   signingOut: false,
   loginPending: false,
 };
+let activeSettingsTab = 'account';
 let systemStatusState = {
   snapshot: null,
   selectedId: 'cpu',
@@ -690,6 +691,44 @@ function localDateTime(value) {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN');
 }
 
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes < 1024 ** 4) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
+}
+
+function renderSettingsFacts(selector, facts) {
+  $(selector).innerHTML = facts.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('');
+}
+
+async function loadSystemSettingsPanels(isAdmin) {
+  const [info, snapshot] = await Promise.all([api('/api/system-info'), api('/api/system-status')]);
+  renderSettingsFacts('#systemInfoFacts', [
+    ['StreamHub 版本', info.version], ['Node.js', info.nodeVersion], ['运行平台', `${info.platform} / ${info.architecture}`],
+    ['运行时间', snapshot.cpu && snapshot.cpu.uptimeSec ? `${Math.floor(snapshot.cpu.uptimeSec / 3600)} 小时` : '—'],
+  ]);
+  renderSettingsFacts('#networkInfoFacts', [
+    ['Web/API', `TCP ${info.webPort} · ${info.webListening ? '监听中' : '不可达'}`],
+    ['RTMP 接入', `TCP ${info.rtmpPort} · ${info.rtmpListening ? '监听中' : '不可达'}`], ['RTMP 健康检查', info.rtmpHealth],
+    ['SRT 预留', `UDP ${info.srtPort}（默认不监听）`],
+    ['网卡', snapshot.network && snapshot.network.available ? `${snapshot.network.interfaces.length} 个接口` : '读取失败'],
+  ]);
+  renderSettingsFacts('#updateInfoFacts', [['当前版本', info.version], ['更新方式', '按发布包手动更新并重启']]);
+  if (!isAdmin) return;
+  const storage = await api('/api/storage');
+  const settings = await api('/api/system-settings');
+  $('#storageRetentionForm').elements.recordingRetentionDays.value = String(settings.settings.recordingRetentionDays || storage.recordingRetentionDays);
+  $('#logRetentionForm').elements.logRetentionDays.value = String(settings.settings.logRetentionDays || storage.logRetentionDays);
+  renderSettingsFacts('#storageInfoFacts', [
+    ['录制目录', storage.paths.recordings],
+    ['磁盘已用', storage.disk ? `${formatBytes(storage.disk.usedBytes)} / ${formatBytes(storage.disk.totalBytes)} (${Number(storage.disk.usagePercent).toFixed(1)}%)` : '读取失败'],
+    ['录制文件', `${storage.recordings} 个`], ['录制目录占用', formatBytes(storage.files.recordings)], ['日志占用', formatBytes(storage.files.logs)],
+  ]);
+}
+
 async function loadSecuritySessions() {
   const result = await api('/api/auth/sessions');
   const body = $('#securitySessionsBody');
@@ -724,24 +763,43 @@ function renderSecurityUsers(users) {
 }
 
 async function loadSecuritySettings() {
-  $('#adminSecuritySection').hidden = authState.role !== 'admin';
-  $('#sessionPolicySection').hidden = authState.role !== 'admin';
-  $('#alertPreferencesSection').hidden = authState.role !== 'admin';
-  $('#auditSection').hidden = authState.role !== 'admin';
+  const isAdmin = authState.role === 'admin';
+  $('#settingsTabUsers').hidden = !isAdmin;
+  $('#settingsTabStorage').hidden = !isAdmin;
+  $('#settingsTabLogs').hidden = !isAdmin;
+  $('#settingsTabAlerts').hidden = !isAdmin;
+  $('#settingsTabUpdates').hidden = !isAdmin;
+  $('#adminSecuritySection').hidden = !isAdmin;
+  $('#alertPreferencesSection').hidden = !isAdmin;
+  if (!isAdmin && ['users', 'storage', 'logs', 'alerts', 'updates'].includes(activeSettingsTab)) activeSettingsTab = 'account';
+  setSettingsTab(activeSettingsTab);
   await loadSecuritySessions();
-  if (authState.role !== 'admin') return;
-  const [userResult, policy, auditResult, systemSettings] = await Promise.all([
-    api('/api/auth/users'), api('/api/auth/settings'), api('/api/auth/audit?limit=100'), api('/api/system-settings'),
+  await loadSystemSettingsPanels(isAdmin);
+  if (!isAdmin) return;
+  const [userResult, policy, systemSettings] = await Promise.all([
+    api('/api/auth/users'), api('/api/auth/settings'), api('/api/system-settings'),
   ]);
   renderSecurityUsers(userResult.users);
   $('#sessionPolicyForm').elements.sessionTtlMs.value = String(policy.sessionTtlMs);
   $('#alertPreferencesForm').elements.lowBitrateWarningPercent.value = String(
     systemSettings.settings.lowBitrateWarningPercent || BITRATE_SHORTFALL_WARNING_PERCENT,
   );
-  $('#securityAuditBody').innerHTML = auditResult.entries.map(item => `
-    <tr><td>${escapeHtml(localDateTime(item.at))}</td><td>${escapeHtml(item.actor)}</td>
-    <td>${escapeHtml(item.action)}</td><td>${escapeHtml(JSON.stringify(item.details || {}))}</td></tr>`).join('')
-    || '<tr><td colspan="4">暂无审计记录</td></tr>';
+}
+
+function setSettingsTab(tab) {
+  const availableTabs = ['account', 'users', 'system', 'network', 'storage', 'logs', 'alerts', 'updates'];
+  const requested = availableTabs.includes(tab) ? tab : 'account';
+  const isAdmin = authState.role === 'admin';
+  const adminOnlyTabs = ['users', 'storage', 'logs', 'alerts', 'updates'];
+  activeSettingsTab = adminOnlyTabs.includes(requested) && !isAdmin ? 'account' : requested;
+  for (const key of availableTabs) {
+    const selected = key === activeSettingsTab;
+    const button = $(`[data-settings-tab="${key}"]`);
+    const panel = $(`#settingsPanel${key[0].toUpperCase()}${key.slice(1)}`);
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+    panel.hidden = !selected;
+  }
 }
 
 async function refreshSecuritySettings(statusSelector, successMessage, action) {
@@ -6524,6 +6582,10 @@ $('#userMenuButton').addEventListener('click', event => {
   setUserMenuOpen($('#userMenu').hidden);
 });
 $('#logoutButton').addEventListener('click', logout);
+$('[data-settings-tab="account"]').closest('[role="tablist"]').addEventListener('click', event => {
+  const tab = event.target.closest('[data-settings-tab]');
+  if (tab && !tab.hidden) setSettingsTab(tab.dataset.settingsTab);
+});
 $('#changePasswordForm').addEventListener('submit', submitPasswordChange);
 $('#createUserForm').addEventListener('submit', submitUserCreate);
 $('#resetUserPasswordForm').addEventListener('submit', submitUserPasswordReset);
@@ -6549,6 +6611,52 @@ $('#alertPreferencesForm').addEventListener('submit', async event => {
       state.settings.lowBitrateWarningPercent = Number(form.elements.lowBitrateWarningPercent.value);
     }
   });
+});
+async function saveSystemSettingsField(form, statusSelector) {
+  const body = {
+    lowBitrateWarningPercent: Number($('#alertPreferencesForm').elements.lowBitrateWarningPercent.value),
+    logRetentionDays: Number($('#logRetentionForm').elements.logRetentionDays.value),
+    recordingRetentionDays: Number($('#storageRetentionForm').elements.recordingRetentionDays.value),
+  };
+  await refreshSecuritySettings(statusSelector, '存储策略已保存', () => api('/api/system-settings', {
+    method: 'PUT', body: JSON.stringify(body),
+  }));
+}
+$('#storageRetentionForm').addEventListener('submit', event => {
+  event.preventDefault();
+  saveSystemSettingsField(event.currentTarget, '#storageStatus');
+});
+$('#logRetentionForm').addEventListener('submit', event => {
+  event.preventDefault();
+  saveSystemSettingsField(event.currentTarget, '#logRetentionStatus');
+});
+$('#cleanupStorageBtn').addEventListener('click', () => {
+  if (!window.confirm('确认清理超过保留期限的已完成录制和非活动日志？此操作不可撤销。')) return;
+  refreshSecuritySettings('#storageStatus', '过期内容已清理', async () => {
+    await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+  });
+});
+$('#checkUpdateBtn').addEventListener('click', async () => {
+  const status = $('#updateStatus');
+  status.textContent = '正在读取当前版本…';
+  status.classList.remove('error');
+  try {
+    const result = await api('/api/system-update-check');
+    renderSettingsFacts('#updateInfoFacts', [
+      ['当前版本', result.currentVersion], ['最新正式版本', result.latestVersion],
+      ['发布日期', result.publishedAt ? localDateTime(result.publishedAt) : '—'], ['更新方式', '需按发布包手动更新并重启'],
+    ]);
+    if (result.updateAvailable === true && result.releaseUrl) {
+      status.textContent = `发现新版本 ${result.latestVersion}。`;
+      const link = document.createElement('a');
+      link.href = result.releaseUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = '查看发布说明';
+      status.append(' ', link);
+    } else if (result.updateAvailable === false) status.textContent = '当前已是最新正式版本。';
+    else status.textContent = '已读取正式版本；当前版本格式无法自动比较，请人工核对。';
+  } catch (error) { status.textContent = error.message || '无法检查版本'; status.classList.add('error'); }
 });
 $('#revokeOtherSessionsBtn').addEventListener('click', () => refreshSecuritySettings(
   '#sessionsStatus', '其他会话已退出', () => api('/api/auth/sessions', { method: 'DELETE' }),
@@ -6635,6 +6743,7 @@ document.addEventListener('keydown', event => {
     $('#userMenuButton').focus();
   }
 });
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) releaseAllPipelineCardMonitors();
   else syncPipelineCardMonitors();
