@@ -585,6 +585,66 @@ test('manager initialization asks the persistent store to reset transient pipeli
   assert.equal(resetCalls, 1);
 });
 
+test('each pipeline start creates a distinct finalized run with destination snapshots', () => {
+  let now = Date.parse('2026-11-24T02:00:00.000Z');
+  const state = {
+    settings: {}, rooms: [], sources: [], pipelineRuns: [],
+    destinations: [
+      { id: 'dest-a', name: '平台 A', enabled: true, protocol: 'rtmp', server: 'rtmp://push.example.com/live', streamKey: 'secret' },
+    ],
+    pipelines: [{
+      id: 'pipe-a', name: '主任务', status: 'stopped',
+      input: { type: 'url', url: 'rtmp://origin.example.com/live/main' },
+      destinationIds: ['dest-a'], mode: 'direct',
+      settings: { live: { videoEncoder: 'libx264' }, video: { outputResolution: '1920x1080', fps: '30' } },
+    }],
+  };
+  const manager = createManager(state, undefined, {
+    now: () => now,
+    scheduleInterval: () => null,
+  });
+  manager.spawnFFmpeg = (role, id, args, logName) => createStubProcess(role, id, args, logName);
+
+  manager.startPipeline('pipe-a');
+  const firstRunId = manager.sessions.get('pipe-a').runId;
+  now += 60_000;
+  manager.stopPipeline('pipe-a');
+  const firstRun = state.pipelineRuns.find(run => run.id === firstRunId);
+
+  assert.equal(firstRun.status, 'stopped');
+  assert.equal(firstRun.stopMode, 'discard');
+  assert.equal(firstRun.destinations[0].id, 'dest-a');
+  assert.equal(Object.hasOwn(firstRun.destinations[0], 'streamKey'), false);
+  assert.equal(firstRun.outputs[0].destination.id, 'dest-a');
+  assert.ok(firstRun.endedAt);
+
+  now += 60_000;
+  manager.startPipeline('pipe-a');
+  const secondRunId = manager.sessions.get('pipe-a').runId;
+  now += 60_000;
+  manager.stopPipeline('pipe-a');
+
+  assert.notEqual(secondRunId, firstRunId);
+  assert.equal(state.pipelineRuns.length, 2);
+  assert.equal(state.pipelineRuns.every(run => run.endedAt), true);
+});
+
+test('manager recovery finalizes an unfinished run as a service interruption', () => {
+  const state = {
+    settings: {}, rooms: [], sources: [], destinations: [], pipelines: [],
+    pipelineRuns: [{
+      id: 'run-interrupted', pipelineId: 'pipe-a', status: 'running', outcome: '',
+      startedAt: '2026-11-24T01:00:00.000Z', endedAt: '', destinations: [], outputs: [],
+    }],
+  };
+
+  createManager(state, undefined, { now: () => Date.parse('2026-11-24T02:00:00.000Z') });
+
+  assert.equal(state.pipelineRuns[0].status, 'interrupted');
+  assert.equal(state.pipelineRuns[0].outcome, 'service-restart');
+  assert.equal(state.pipelineRuns[0].endedAt, '2026-11-24T02:00:00.000Z');
+});
+
 function createFallbackHarness({ mode = 'shared-relay' } = {}) {
   const scheduler = createManualScheduler();
   const probeResults = [];

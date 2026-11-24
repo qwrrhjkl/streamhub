@@ -126,8 +126,7 @@ th{color:var(--muted);font-weight:650}
 .form select[multiple]{min-height:132px}
 .log-toolbar{align-items:end;display:grid;gap:10px;grid-template-columns:minmax(0,1fr) 42px 42px}
 .log-toolbar label{min-width:0}
-.log-delete-button{align-items:center;display:flex;font-size:22px;height:42px;justify-content:center;padding:0;width:42px}
-.log-report-button{align-items:center;display:flex;font-size:22px;height:42px;justify-content:center;padding:0;width:42px}
+.log-delete-button,.log-report-button{align-items:center;display:flex;font-size:22px;height:42px;justify-content:center;padding:0;width:42px}
 .log-delete-button:disabled,.log-report-button:disabled{background:var(--surface-2);border-color:var(--line);color:#8996a3;cursor:not-allowed;opacity:.72}
 .form-note{background:var(--surface-3);border:1px solid var(--line);border-radius:12px;color:var(--muted);line-height:1.55;margin:2px 0 4px;padding:12px 13px}
 .form-help{color:var(--muted);font-size:13px;line-height:1.5;margin:0}
@@ -798,6 +797,11 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .process-status-table-wrap{border-color:var(--ui-line);border-radius:6px}
 .console-app #deviceText,.console-app #logText{background:#101b22;border:1px solid #263a44;border-radius:6px;color:#dce8eb;font-size:12px;line-height:1.65;margin:14px 0 0;max-height:66vh;min-height:420px;overflow:auto;padding:16px;white-space:pre-wrap;word-break:break-word}
 .console-app .log-toolbar{grid-template-columns:minmax(0,1fr) 36px 36px}
+.console-app .log-section{display:grid;gap:12px}
+.console-app .log-section+.log-section{border-top:1px solid var(--ui-line);margin-top:8px;padding-top:22px}
+.console-app .log-section-heading h2{color:var(--ui-ink);font-size:16px;margin:0}
+.console-app .log-section-heading p{color:var(--ui-muted);font-size:12px;line-height:1.5;margin:4px 0 0}
+.console-app .log-file-toolbar{grid-template-columns:minmax(0,1fr) 36px 36px}
 .console-app .log-report-button,.console-app .log-delete-button{font-size:inherit;height:36px;min-height:36px;width:36px}
 .console-app dialog.dialog-system-v2{background:var(--ui-surface);border:1px solid var(--ui-line);border-radius:8px;box-shadow:0 22px 58px rgb(16 34 45 / .3);color:var(--ui-ink);padding:0}
 .console-app dialog.dialog-system-v2::backdrop{background:rgb(9 22 29 / .62)}
@@ -820,6 +824,19 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .overlay-layout-canvas{aspect-ratio:16/9;background:#050a0d;border-color:#263942;border-radius:6px;max-width:100%;overflow:hidden;position:relative;width:100%}
 .console-app .live-delay-stop-dialog{max-width:min(560px,calc(100vw - 28px));width:100%}
 .console-app .live-delay-stop-shell>div:first-child{border-bottom:1px solid var(--ui-line);padding-bottom:14px}
+.console-app .pipeline-action-dialog{max-width:min(480px,calc(100vw - 28px));width:100%}
+.console-app .pipeline-action-shell{align-items:start;background:var(--ui-surface);border-radius:8px;display:grid;gap:16px;grid-template-columns:40px minmax(0,1fr);padding:24px}
+.console-app .pipeline-action-mark{align-items:center;background:var(--ui-signal-soft);border-radius:50%;color:var(--ui-signal-dark);display:flex;height:40px;justify-content:center;width:40px}
+.console-app .pipeline-action-mark svg{height:18px;width:18px}
+.console-app .pipeline-action-dialog[data-action="stop"] .pipeline-action-mark{background:var(--ui-danger-soft);color:var(--ui-danger)}
+.console-app .pipeline-action-content h2{font-size:20px;line-height:1.3;margin:1px 0 0}
+.console-app .pipeline-action-content>p{color:var(--ui-muted);font-size:13px;line-height:1.6;margin:7px 0 0}
+.console-app .pipeline-action-summary{border-top:1px solid var(--ui-line);display:grid;margin:16px 0 0;padding-top:10px}
+.console-app .pipeline-action-summary>div{align-items:baseline;display:grid;gap:12px;grid-template-columns:72px minmax(0,1fr);padding:5px 0}
+.console-app .pipeline-action-summary dt{color:var(--ui-muted);font-size:12px}
+.console-app .pipeline-action-summary dd{color:var(--ui-ink);font-size:13px;margin:0;overflow-wrap:anywhere}
+.console-app .pipeline-action-actions{display:flex;gap:10px;grid-column:1/-1;justify-content:flex-end}
+.console-app .pipeline-action-actions button{min-width:92px}
 .console-app .system-shutdown-dialog{max-width:min(440px,calc(100vw - 28px));width:100%}
 .console-app .system-shutdown-shell{align-items:start;display:grid;gap:16px;grid-template-columns:42px minmax(0,1fr);padding:24px}
 .console-app .system-shutdown-mark{align-items:center;background:var(--ui-danger-soft);border:1px solid color-mix(in srgb,var(--ui-danger) 22%,var(--ui-line));border-radius:50%;color:var(--ui-danger);display:flex;height:40px;justify-content:center;width:40px}
@@ -900,6 +917,10 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   .console-app .item-actions button{width:100%}
   .console-app .media-workspace-v2,.console-app .recording-workspace-v2,.console-app .scene-editor{padding:14px}
   .console-app .studio-switcher-shell,.console-app .input-preview-shell,.console-app .overlay-layout-shell,.console-app .monitor-detail-shell{padding:14px}
+  .console-app .pipeline-action-shell{grid-template-columns:36px minmax(0,1fr);padding:18px}
+  .console-app .pipeline-action-mark{height:36px;width:36px}
+  .console-app .pipeline-action-actions{display:grid;grid-template-columns:1fr}
+  .console-app .pipeline-action-actions button{width:100%}
   .console-app .monitor-detail-controls,.console-app .monitor-detail-metrics{grid-template-columns:1fr}
   .console-app #deviceText,.console-app #logText{min-height:340px}
 }
@@ -966,7 +987,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .copy-row,.console-app .pipeline-metrics,.console-app .dashboard-resource-card,.console-app .dashboard-service-panel,.console-app .dashboard-network-stats div{background:var(--ui-surface-2)}
 .console-app .dashboard-gauge::before{background:var(--ui-surface)}
 .console-app .dashboard-pipeline-card,.console-app .dashboard-process-panel,.console-app .system-status-workspace,.console-app .process-status-section{background:var(--ui-surface)}
-.console-app :is(.media-picker-shell,.studio-switcher-shell,.input-preview-shell,.overlay-layout-shell,.live-delay-stop-shell,.monitor-detail-shell){background:var(--ui-surface)}
+.console-app :is(.media-picker-shell,.studio-switcher-shell,.input-preview-shell,.overlay-layout-shell,.pipeline-action-shell,.live-delay-stop-shell,.monitor-detail-shell){background:var(--ui-surface)}
 
 .console-app[data-theme="night"]{
   --ui-chart-surface:#0a1b2d;
@@ -1019,7 +1040,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app[data-theme="night"] .copy-row,.console-app[data-theme="night"] .pipeline-metrics,.console-app[data-theme="night"] .dashboard-resource-card,.console-app[data-theme="night"] .dashboard-service-panel,.console-app[data-theme="night"] .dashboard-network-stats div{background:#0d243b}
 .console-app[data-theme="night"] .dashboard-gauge::before{background:#0a1b2d}
 .console-app[data-theme="night"] .dashboard-pipeline-card,.console-app[data-theme="night"] .dashboard-process-panel,.console-app[data-theme="night"] .system-status-workspace,.console-app[data-theme="night"] .process-status-section{background:#0a1b2d}
-.console-app[data-theme="night"] :is(.media-picker-shell,.studio-switcher-shell,.input-preview-shell,.overlay-layout-shell,.live-delay-stop-shell,.monitor-detail-shell){background:#0a1b2d}
+.console-app[data-theme="night"] :is(.media-picker-shell,.studio-switcher-shell,.input-preview-shell,.overlay-layout-shell,.pipeline-action-shell,.live-delay-stop-shell,.monitor-detail-shell){background:#0a1b2d}
 .console-app[data-theme="night"] .system-resource-list,.console-app[data-theme="night"] .studio-tabs,.console-app[data-theme="night"] .scene-rail,.console-app[data-theme="night"] .overlay-layout-picker{background:#081a2c}
 .console-app[data-theme="night"] .pipeline-program-summary,.console-app[data-theme="night"] .selected-destination,.console-app[data-theme="night"] .media-file-picker,.console-app[data-theme="night"] .output-chart-wrap,.console-app[data-theme="night"] .monitor-detail-controls{background:#0d243b}
 .console-app[data-theme="night"] .system-resource-button{background:#0a1b2d;color:var(--ui-ink)}

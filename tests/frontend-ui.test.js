@@ -548,6 +548,17 @@ test('delayed pipeline stop uses drain discard and cancel actions', () => {
   assert.match(app, /cancelLiveDelayStopBtn[\s\S]*liveDelayStopDialog'\)\.close\(\)/);
 });
 
+test('pipeline start and ordinary stop use the in-app confirmation dialog', () => {
+  assert.match(html, /<dialog[^>]+id="pipelineActionDialog"[^>]+aria-labelledby="pipelineActionTitle"/);
+  assert.match(html, /id="confirmPipelineActionBtn"/);
+  assert.match(html, /id="cancelPipelineActionBtn"/);
+  assert.match(app, /async function startPipeline\(id\)[\s\S]{0,1600}await confirmPipelineAction\(pipeline, 'start'\)/);
+  assert.match(app, /async function stopPipeline\(id\)[\s\S]{0,800}await confirmPipelineAction\(pipeline, 'stop'\)/);
+  assert.doesNotMatch(app, /async function startPipeline\(id\)[\s\S]{0,1600}confirmDangerousAction/);
+  assert.doesNotMatch(app, /async function stopPipeline\(id\)[\s\S]{0,800}confirmDangerousAction/);
+  assert.match(appFunctionSource('stopPipeline'), /openLiveDelayStopDialog\(pipeline\)/);
+});
+
 test('draining live delay exposes remaining time and a distinct task state', () => {
   const context = appFunctions(['pipelineStatusLabel', 'pipelineRuntimeMessage'], {
     state: {
@@ -1262,11 +1273,8 @@ test('monitor range preset change triggers an immediate reload', () => {
   assert.match(app, /monitorRangePreset'\)\.addEventListener\('change', handleMonitorRangePresetChange\)/);
 });
 
-test('dangerous room and pipeline operations require confirmation before API calls', () => {
-  assert.match(app, /function confirmDangerousAction/);
-  assert.match(app, /confirmDangerousAction\(`确认\$\{enabled \? '启用' : '禁用'\}直播间/);
-  assert.match(app, /confirmDangerousAction\('确认开始这个分发任务/);
-  assert.match(app, /confirmDangerousAction\('确认停止这个分发任务/);
+test('dangerous room operations retain a confirmation before API calls', () => {
+  assert.match(appFunctionSource('toggleRoom'), /confirmDangerousAction/);
 });
 
 test('pipeline destinations use explicit picker and selected output list', () => {
@@ -1837,16 +1845,12 @@ test('process status table is dense responsive and internally scrollable', () =>
   assert.match(css, /@media\(max-width:760px\)[\s\S]*\.process-status-head\{[^}]*align-items:stretch[^}]*flex-direction:column/);
 });
 
-test('log page keeps one report entry per task and platform', () => {
+test('log selection downloads its per-run PDF and preserves raw-log deletion', () => {
   assert.match(app, /const TASK_LOG_KINDS = new Set\(\['relay', 'destination'\]\)/);
-  const context = appFunctions(['latestTaskLogs'], {
+  const context = appFunctions(['taskLogs', 'reportRunForLog'], {
     TASK_LOG_KINDS: new Set(['relay', 'destination']),
-    state: {
-      pipelines: [{ id: 'pipe-a' }],
-      destinations: [{ id: 'dest-a' }, { id: 'dest-b' }],
-    },
   });
-  const result = context.latestTaskLogs([
+  const result = context.taskLogs([
     { file: 'preview.log', kind: 'preview', pipelineId: '', active: true, timestamp: '2026-11-20T10:00:00Z', displayName: 'preview' },
     { file: 'relay-old.log', kind: 'relay', pipelineId: 'pipe-a', active: false, timestamp: '2026-11-19T10:00:00Z', displayName: 'relay old' },
     { file: 'relay-active.log', kind: 'relay', pipelineId: 'pipe-a', active: true, timestamp: '2026-11-18T10:00:00Z', displayName: 'relay active' },
@@ -1859,10 +1863,22 @@ test('log page keeps one report entry per task and platform', () => {
   ]);
 
   assert.deepEqual(Array.from(result, entry => entry.file).sort(), [
-    'dest-b.log', 'dest-new.log', 'relay-active.log',
+    'deleted-destination.log', 'deleted-pipeline.log', 'dest-b.log', 'dest-new.log', 'dest-old.log', 'relay-active.log', 'relay-old.log',
   ]);
   assert.ok(result.every(entry => entry.pipelineId));
-  assert.match(appFunctionSource('loadLogs'), /latestTaskLogs\(/);
+  assert.match(appFunctionSource('loadLogs'), /api\('\/api\/logs'\)/);
+  assert.match(appFunctionSource('loadLogs'), /api\('\/api\/reports\/runs'\)/);
+  const mappedRun = context.reportRunForLog(result.find(entry => entry.file === 'dest-new.log'), [
+    { id: 'run-old', pipelineId: 'pipe-a', startedAt: '2026-11-19T08:00:00Z', endedAt: '2026-11-19T10:00:00Z', destinations: [{ id: 'dest-a' }] },
+    { id: 'run-current', pipelineId: 'pipe-a', startedAt: '2026-11-20T08:55:00Z', endedAt: '2026-11-20T09:30:00Z', destinations: [{ id: 'dest-a' }] },
+  ]);
+  assert.equal(mappedRun.id, 'run-current');
+  assert.match(appFunctionSource('downloadSelectedLogReport'), /\/api\/reports\/runs\/\$\{encodeURIComponent\(entry\.reportRun\.id\)\}/);
+  assert.match(appFunctionSource('downloadSelectedLogReport'), /application\/pdf/);
+  assert.match(appFunctionSource('deleteSelectedLog'), /method: 'DELETE'/);
   assert.match(html, /任务与平台日志/);
-  assert.match(html, /下载任务 \/ 平台报告/);
+  assert.equal((html.match(/<select id="logSelect"/g) || []).length, 1);
+  assert.match(html, /id="downloadLogReportBtn"[^>]+disabled/);
+  assert.match(html, /id="deleteLogBtn"[^>]+disabled/);
+  assert.doesNotMatch(html, /id="reportSelect"|id="downloadLogBtn"/);
 });

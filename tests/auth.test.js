@@ -109,15 +109,37 @@ test('users have fixed roles, passwords are changed securely, and the last admin
 
   assert.equal(observer.role, 'viewer');
   assert.equal(observerLogin.role, 'viewer');
+  assert.equal(auth.resolve(admin.token), null);
   assert.throws(() => auth.updateUser(auth.listUsers()[0].id, { role: 'invalid' }), /角色无效/);
   assert.throws(() => auth.deleteUser(auth.listUsers()[0].id), /至少需要保留一个/);
 
-  const adminSecondSession = auth.login({ username: 'admin', password: 'heroesports' });
-  auth.changePassword(admin.token, 'heroesports', 'an-even-safer-password');
-  assert.equal(auth.resolve(adminSecondSession.token), null);
-  assert.equal(auth.resolve(admin.token).username, 'admin');
+  const currentAdmin = auth.login({ username: 'admin', password: 'heroesports' });
+  assert.equal(auth.resolve(observerLogin.token), null);
+  auth.changePassword(currentAdmin.token, 'heroesports', 'an-even-safer-password');
+  assert.equal(auth.resolve(currentAdmin.token).username, 'admin');
   assert.equal(auth.login({ username: 'admin', password: 'heroesports' }).ok, false);
   assert.equal(auth.login({ username: 'admin', password: 'an-even-safer-password' }).ok, true);
+});
+
+test('a successful login replaces the sole online session while a failed login leaves it active', () => {
+  let tokenIndex = 0;
+  const auth = createAuthManager({
+    username: 'admin',
+    password: 'bootstrap-password',
+    tokenFactory: () => `single-session-${tokenIndex += 1}`,
+  });
+  auth.createUser({ username: 'operator', password: 'operator-password', role: 'operator' });
+
+  const admin = auth.login({ username: 'admin', password: 'bootstrap-password' });
+  const failed = auth.login({ username: 'operator', password: 'wrong-password' });
+  assert.equal(failed.ok, false);
+  assert.equal(auth.resolve(admin.token).username, 'admin');
+
+  const operator = auth.login({ username: 'operator', password: 'operator-password' });
+  assert.equal(operator.ok, true);
+  assert.equal(auth.resolve(admin.token), null);
+  assert.equal(auth.resolve(operator.token).username, 'operator');
+  assert.equal(auth.listSessions(operator.token, true).length, 1);
 });
 
 test('idle session timeout refreshes on activity and auth data persists as password hashes', t => {

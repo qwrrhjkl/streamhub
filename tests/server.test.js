@@ -176,6 +176,51 @@ test('pipeline stop API forwards validated drain and discard modes', async t => 
   ]);
 });
 
+test('run report API lists immutable batches and downloads overall and destination PDFs', async t => {
+  const run = {
+    id: 'run-report-a',
+    pipelineId: 'pipe-a',
+    pipeline: {
+      id: 'pipe-a', name: '主任务', input: { type: 'url' },
+      settings: { live: { bitrateKbps: 6000 }, video: { outputResolution: '1920x1080', fps: '30' } },
+    },
+    source: { type: 'url', name: '直播源' },
+    destinations: [{ id: 'dest-a', name: '平台 A', protocol: 'rtmp', enabled: true }],
+    startedAt: '2026-11-24T02:00:00.000Z',
+    endedAt: '2026-11-24T02:10:00.000Z',
+    status: 'stopped', outcome: 'stopped', stopMode: 'discard',
+    outputs: [{
+      id: 'pipe-a-dest-a', destination: { id: 'dest-a', name: '平台 A', protocol: 'rtmp' },
+      status: 'stopped', lastOperationalStatus: 'running', uptimeSec: 600,
+      metrics: { bitrateKbps: 5980, fps: 30, speed: 1 },
+    }],
+  };
+  const server = createTestServer({
+    rootDir: path.resolve(__dirname, '..'),
+    store: { getState: () => ({ pipelineRuns: [run] }), list: () => [] },
+    manager: { monitor: () => ({}) },
+    previewManager: createPreviewManager(),
+    logManager: { start() {}, stop() {}, list: () => [] },
+  });
+  await listen(server);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const listed = await fetch(`${baseUrl}/api/reports/runs`);
+  assert.equal(listed.status, 200);
+  assert.deepEqual((await listed.json()).runs[0].destinations, [{ id: 'dest-a', name: '平台 A', protocol: 'rtmp' }]);
+
+  for (const suffix of ['', '?destinationId=dest-a']) {
+    const response = await fetch(`${baseUrl}/api/reports/runs/run-report-a${suffix}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/pdf');
+    assert.equal(Buffer.from(await response.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
+  }
+
+  const missing = await fetch(`${baseUrl}/api/reports/runs/missing-run`);
+  assert.equal(missing.status, 404);
+});
+
 test('authentication routes issue and invalidate a protected management session', async t => {
   const auth = createAuthManager({
     username: 'admin',

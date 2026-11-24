@@ -170,9 +170,10 @@ function createAuthManager({ username, password, now = Date.now, tokenFactory, f
         lastSeenAt: currentTime,
         ip: clientIp,
       };
-      sessions.set(token, session);
       user.lastLoginAt = new Date(currentTime).toISOString();
       persist();
+      sessions.clear();
+      sessions.set(token, session);
       return { ok: true, token, username: user.username, role: user.role, expiresAt: session.expiresAt };
     },
 

@@ -599,16 +599,24 @@
         <div class="page-head">
           <div>
             <h1>任务与平台日志</h1>
-            <p>仅显示分发任务与推流平台的运行日志，可生成 PDF 报告。</p>
+            <p>选择一次任务或目标运行，下载对应 PDF 报告，或删除原始日志。</p>
           </div>
         </div>
         <div class="panel form">
-          <div class="log-toolbar">
-            <label>日志文件<select id="logSelect"></select></label>
-            <button class="log-report-button icon-button" id="downloadLogReportBtn" type="button" title="下载任务 / 平台报告" aria-label="下载当前任务或平台报告" disabled><i data-lucide="download" aria-hidden="true"></i></button>
-            <button class="danger log-delete-button icon-button" id="deleteLogBtn" type="button" title="删除日志" aria-label="删除当前日志" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
-          </div>
-          <pre id="logText">暂无日志</pre>
+          <section class="log-section" aria-labelledby="rawLogHeading">
+            <div class="log-section-heading">
+              <div>
+                <h2 id="rawLogHeading">任务与平台日志</h2>
+                <p>选择任务日志生成总体报告，选择目标日志生成该目标报告。</p>
+              </div>
+            </div>
+            <div class="log-toolbar log-file-toolbar">
+              <label>日志文件<select id="logSelect"></select></label>
+              <button class="log-report-button icon-button" id="downloadLogReportBtn" type="button" title="下载 PDF 报告" aria-label="下载当前任务或平台 PDF 报告" disabled><i data-lucide="download" aria-hidden="true"></i></button>
+              <button class="danger log-delete-button icon-button" id="deleteLogBtn" type="button" title="删除原始日志" aria-label="删除当前原始日志" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
+            </div>
+            <pre id="logText">暂无日志</pre>
+          </section>
         </div>
       </section>
 
@@ -883,6 +891,24 @@
 
       <div class="overlay-layout-actions">
         <button class="primary" id="overlayLayoutAdjustBtn" type="button">调节</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="pipeline-action-dialog dialog-system-v2" id="pipelineActionDialog" aria-labelledby="pipelineActionTitle" aria-describedby="pipelineActionDescription">
+    <div class="pipeline-action-shell">
+      <div class="pipeline-action-mark" id="pipelineActionMark" aria-hidden="true"><i data-lucide="play"></i></div>
+      <div class="pipeline-action-content">
+        <h2 id="pipelineActionTitle">确认启动任务？</h2>
+        <p id="pipelineActionDescription">启动后将调用 FFmpeg 并向已启用的目标推流。</p>
+        <dl class="pipeline-action-summary">
+          <div><dt>分发任务</dt><dd id="pipelineActionPipelineName">-</dd></div>
+          <div><dt>输出目标</dt><dd id="pipelineActionDestinationCount">-</dd></div>
+        </dl>
+      </div>
+      <div class="pipeline-action-actions">
+        <button class="primary" id="confirmPipelineActionBtn" type="button">确认启动</button>
+        <button id="cancelPipelineActionBtn" type="button">取消</button>
       </div>
     </div>
   </dialog>

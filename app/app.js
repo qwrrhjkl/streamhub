@@ -375,6 +375,7 @@ const pipelineCardMonitorState = {
   maxActive: 6,
 };
 let pendingLiveDelayStopPipelineId = null;
+let pendingPipelineActionResolve = null;
 let pipelineWatermarks = [];
 let pipelineNoSignalImage = null;
 let pipelineSlideshow = {
@@ -5830,7 +5831,7 @@ async function startPipeline(id) {
     showPipelineValidationError('这个分发任务没有启用的输出目标，请先添加至少一个已启用的目标端点');
     return;
   }
-  if (!confirmDangerousAction('确认开始这个分发任务？开始后会调用 FFmpeg 并向已选平台推流。')) return;
+  if (!await confirmPipelineAction(pipeline, 'start')) return;
   try {
     await api(`/api/pipelines/${id}/start`, { method: 'POST', body: '{}' });
     await loadState();
@@ -5838,6 +5839,39 @@ async function startPipeline(id) {
   } catch (e) {
     alert(e.message);
   }
+}
+
+function settlePipelineAction(confirmed) {
+  const resolve = pendingPipelineActionResolve;
+  pendingPipelineActionResolve = null;
+  if (resolve) resolve(Boolean(confirmed));
+  const dialog = $('#pipelineActionDialog');
+  if (dialog.open) dialog.close();
+}
+
+function confirmPipelineAction(pipeline, action) {
+  const dialog = $('#pipelineActionDialog');
+  const stopping = action === 'stop';
+  const destinationCount = pipelineEnabledDestinations(pipeline).length;
+  if (pendingPipelineActionResolve) settlePipelineAction(false);
+  dialog.dataset.action = stopping ? 'stop' : 'start';
+  $('#pipelineActionTitle').textContent = stopping ? '确认停止任务？' : '确认启动任务？';
+  $('#pipelineActionDescription').textContent = stopping
+    ? '停止后当前输出目标会断流，本次运行将生成独立报告。'
+    : '启动后将调用 FFmpeg 并向已启用的目标推流。';
+  $('#pipelineActionPipelineName').textContent = pipeline.name || pipeline.id;
+  $('#pipelineActionDestinationCount').textContent = `${destinationCount} 个目标`;
+  const mark = $('#pipelineActionMark');
+  mark.innerHTML = `<i data-lucide="${stopping ? 'square' : 'play'}" aria-hidden="true"></i>`;
+  const confirmButton = $('#confirmPipelineActionBtn');
+  confirmButton.textContent = stopping ? '确认停止' : '确认启动';
+  confirmButton.className = stopping ? 'danger' : 'primary';
+  refreshIcons();
+  if (!dialog.open) dialog.showModal();
+  $('#cancelPipelineActionBtn').focus();
+  return new Promise(resolve => {
+    pendingPipelineActionResolve = resolve;
+  });
 }
 
 function openLiveDelayStopDialog(pipeline) {
@@ -5885,7 +5919,7 @@ async function stopPipeline(id) {
   if (hasLiveDelay && ['running', 'starting', 'fallback', 'draining'].includes(pipelineRuntimeStatus(pipeline))) {
     return openLiveDelayStopDialog(pipeline);
   }
-  if (!confirmDangerousAction('确认停止这个分发任务？停止后当前输出平台会断流。')) return;
+  if (!await confirmPipelineAction(pipeline, 'stop')) return;
   return requestPipelineStop(id, 'discard');
 }
 
@@ -6107,68 +6141,60 @@ async function loadDevices() {
 
 const TASK_LOG_KINDS = new Set(['relay', 'destination']);
 
-function latestTaskLogs(logs = [], appState = typeof state !== 'undefined' ? state : {}) {
-  const pipelineIds = new Set((appState.pipelines || []).map(item => String(item.id)));
-  const destinationIds = new Set((appState.destinations || []).map(item => String(item.id)));
-  const groups = new Map();
-  for (const entry of logs) {
-    if (!entry || !TASK_LOG_KINDS.has(entry.kind) || !pipelineIds.has(String(entry.pipelineId || ''))) continue;
-    if (entry.kind === 'destination' && !destinationIds.has(String(entry.destinationId || ''))) continue;
-    const key = entry.kind === 'destination'
-      ? `${entry.pipelineId}:${entry.destinationId || ''}`
-      : `${entry.pipelineId}:relay`;
-    const current = groups.get(key);
-    const entryTime = Date.parse(entry.timestamp) || 0;
-    const currentTime = current ? Date.parse(current.timestamp) || 0 : 0;
-    if (!current
-      || (entry.active && !current.active)
-      || (Boolean(entry.active) === Boolean(current.active) && entryTime > currentTime)) {
-      groups.set(key, entry);
-    }
-  }
-  return Array.from(groups.values()).sort((a, b) => {
+function taskLogs(logs = []) {
+  return logs.filter(entry => entry && TASK_LOG_KINDS.has(entry.kind)).sort((a, b) => {
     if (Boolean(a.active) !== Boolean(b.active)) return a.active ? -1 : 1;
-    const pipelineOrder = String(a.pipelineId).localeCompare(String(b.pipelineId));
-    if (pipelineOrder) return pipelineOrder;
-    if (a.kind !== b.kind) return a.kind === 'relay' ? -1 : 1;
-    return String(a.destinationId || '').localeCompare(String(b.destinationId || ''));
+    return (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0);
   });
+}
+
+function reportRunForLog(entry, runs = []) {
+  const logTime = Date.parse(entry && entry.timestamp);
+  if (!Number.isFinite(logTime)) return null;
+  const toleranceMs = 120_000;
+  return runs.filter(run => {
+    if (!run || run.pipelineId !== entry.pipelineId) return false;
+    if (entry.kind === 'destination'
+      && !(run.destinations || []).some(destination => destination.id === entry.destinationId)) return false;
+    const startedAt = Date.parse(run.startedAt);
+    const endedAt = Date.parse(run.endedAt);
+    if (!Number.isFinite(startedAt) || logTime < startedAt - toleranceMs) return false;
+    return !Number.isFinite(endedAt) || logTime <= endedAt + toleranceMs;
+  }).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0] || null;
 }
 
 function selectedLogEntry() {
   return logCatalog.get($('#logSelect').value) || null;
 }
 
-function syncLogDeleteButton() {
-  const entry = selectedLogEntry();
-  $('#deleteLogBtn').disabled = !entry || entry.deletable !== true;
-}
-
-function syncLogReportButton() {
+function syncLogActions() {
   const entry = selectedLogEntry();
   $('#downloadLogReportBtn').disabled = !entry || !entry.pipelineId;
+  $('#deleteLogBtn').disabled = !entry || entry.deletable !== true;
 }
 
 async function loadLogs(selectedFile = '') {
   const select = $('#logSelect');
   const preferredFile = selectedFile || select.value;
-  const data = await api('/api/logs');
-  const logs = latestTaskLogs(Array.isArray(data.logs) ? data.logs : [], state);
+  const [data, reportData] = await Promise.all([api('/api/logs'), api('/api/reports/runs')]);
+  const runs = Array.isArray(reportData.runs) ? reportData.runs : [];
+  const logs = taskLogs(Array.isArray(data.logs) ? data.logs : []).map(entry => ({
+    ...entry,
+    reportRun: reportRunForLog(entry, runs),
+  }));
   logCatalog = new Map(logs.map(entry => [entry.file, entry]));
   select.innerHTML = '<option value="">请选择任务或平台日志</option>' + logs.map(entry => (
     `<option value="${escapeHtml(entry.file)}">${escapeHtml(entry.displayName)}${entry.active ? '（运行中）' : ''}</option>`
   )).join('');
   select.value = preferredFile && logCatalog.has(preferredFile) ? preferredFile : '';
-  syncLogDeleteButton();
-  syncLogReportButton();
+  syncLogActions();
   if (!logs.length) $('#logText').textContent = '暂无可用的分发任务或平台日志';
   else if (!select.value) $('#logText').textContent = '请选择任务或平台日志';
 }
 
 $('#logSelect').addEventListener('change', async event => {
   const file = event.target.value;
-  syncLogDeleteButton();
-  syncLogReportButton();
+  syncLogActions();
   if (!file) {
     $('#logText').textContent = '请选择日志文件';
     return;
@@ -6184,11 +6210,11 @@ async function deleteSelectedLog() {
   try {
     await api(`/api/logs?file=${encodeURIComponent(entry.file)}`, { method: 'DELETE' });
     await loadLogs();
-    $('#logText').textContent = '请选择日志文件';
+    $('#logText').textContent = '请选择任务或平台日志';
     showToast('日志已删除');
   } catch (error) {
     showToast(error.status === 409 ? '日志正在运行，无法删除' : error.message);
-    syncLogDeleteButton();
+    syncLogActions();
   }
 }
 
@@ -6198,7 +6224,9 @@ async function downloadSelectedLogReport() {
   const button = $('#downloadLogReportBtn');
   button.disabled = true;
   try {
-    const reportUrl = new URL(`/api/reports/pipelines/${encodeURIComponent(entry.pipelineId)}`, window.location.origin);
+    const reportUrl = entry.reportRun
+      ? new URL(`/api/reports/runs/${encodeURIComponent(entry.reportRun.id)}`, window.location.origin)
+      : new URL(`/api/reports/pipelines/${encodeURIComponent(entry.pipelineId)}`, window.location.origin);
     if (entry.destinationId) reportUrl.searchParams.set('destinationId', entry.destinationId);
     const response = await fetch(`${reportUrl.pathname}${reportUrl.search}`, {
       headers: { accept: 'application/pdf' },
@@ -6214,18 +6242,22 @@ async function downloadSelectedLogReport() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = entry.destinationId
-      ? `streamhub-output-report-${entry.pipelineId}-${entry.destinationId}.pdf`
-      : `streamhub-pipeline-report-${entry.pipelineId}.pdf`;
+    link.download = entry.reportRun
+      ? (entry.destinationId
+        ? `streamhub-run-${entry.reportRun.id}-output-${entry.destinationId}.pdf`
+        : `streamhub-run-${entry.reportRun.id}-pipeline.pdf`)
+      : (entry.destinationId
+        ? `streamhub-output-report-${entry.pipelineId}-${entry.destinationId}.pdf`
+        : `streamhub-pipeline-report-${entry.pipelineId}.pdf`);
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showToast('报告已下载');
+    showToast('PDF 报告已下载');
   } catch (error) {
     showToast(error.message);
   } finally {
-    syncLogReportButton();
+    syncLogActions();
   }
 }
 
@@ -6512,6 +6544,15 @@ $('#pipelinePreviousSectionBtn').addEventListener('click', () => {
 $('#pipelineNextSectionBtn').addEventListener('click', () => {
   const index = PIPELINE_SECTION_ORDER.indexOf(activePipelineSection);
   switchPipelineSection(PIPELINE_SECTION_ORDER[Math.min(PIPELINE_SECTION_ORDER.length - 1, index + 1)]);
+});
+$('#confirmPipelineActionBtn').addEventListener('click', () => settlePipelineAction(true));
+$('#cancelPipelineActionBtn').addEventListener('click', () => settlePipelineAction(false));
+$('#pipelineActionDialog').addEventListener('cancel', event => {
+  event.preventDefault();
+  settlePipelineAction(false);
+});
+$('#pipelineActionDialog').addEventListener('close', () => {
+  if (pendingPipelineActionResolve) settlePipelineAction(false);
 });
 $('#drainLiveDelayBtn').addEventListener('click', () => {
   const pipelineId = pendingLiveDelayStopPipelineId;

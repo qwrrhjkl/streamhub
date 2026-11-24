@@ -35,7 +35,7 @@ const {
   projectMonitorHistoryPoint,
 } = require('./monitorHistoryStore');
 const { MonitorHistoryQueryCoordinator } = require('./monitorHistoryQueryCoordinator');
-const { ensureDir } = require('./store');
+const { createId, ensureDir } = require('./store');
 const { prepareSlideshowCache } = require('./slideshowCache');
 const { prepareFallbackImage: prepareFallbackImageAsset } = require('./fallbackImageCache');
 const { resolveMediaBinaries } = require('./mediaBinaries');
@@ -539,6 +539,58 @@ function dropMetricsForSpan(firstPoint, lastPoint, targetFps, windowSec) {
   };
 }
 
+function reportInputSnapshot(input = {}) {
+  const type = String(input.type || '');
+  if (type === 'room') return { type, roomId: input.roomId || '' };
+  if (type === 'capture') {
+    const capture = input.capture || {};
+    return {
+      type,
+      capture: {
+        backend: capture.backend || 'v4l2',
+        device: capture.device || '',
+        videoDevice: capture.videoDevice || '',
+        formatCode: capture.formatCode || 'auto',
+      },
+    };
+  }
+  if (type === 'file' || type === 'playlist') {
+    return { type, mediaId: input.mediaId || '', mediaIds: (input.mediaIds || []).slice() };
+  }
+  if (type === 'scene') return { type, sceneId: input.sceneId || '' };
+  return { type };
+}
+
+function reportPipelineSnapshot(pipeline = {}) {
+  return {
+    id: pipeline.id || '',
+    name: pipeline.name || pipeline.id || '',
+    mode: pipeline.mode || '',
+    sourceId: pipeline.sourceId || '',
+    input: reportInputSnapshot(pipeline.input || {}),
+    settings: JSON.parse(JSON.stringify(pipeline.settings || {})),
+  };
+}
+
+function reportSourceSnapshot(source = {}) {
+  return {
+    id: source.id || '',
+    name: source.name || '',
+    type: source.type || '',
+    roomId: source.roomId || '',
+  };
+}
+
+function reportDestinationSnapshot(destination = {}) {
+  return {
+    id: destination.id || '',
+    name: destination.name || destination.id || '',
+    protocol: destination.protocol || destination.type || 'rtmp',
+    type: destination.type || '',
+    enabled: destination.enabled !== false,
+  };
+}
+
 class ProcessManager {
   constructor({
     rootDir,
@@ -604,6 +656,79 @@ class ProcessManager {
     if (typeof this.store.resetTransientPipelineStatuses === 'function') {
       this.store.resetTransientPipelineStatuses();
     }
+    this.recoverInterruptedPipelineRuns();
+  }
+
+  recoverInterruptedPipelineRuns() {
+    if (typeof this.store.update !== 'function') return;
+    const currentState = typeof this.store.getState === 'function' ? this.store.getState() : {};
+    if (!(currentState.pipelineRuns || []).some(run => run && run.status === 'running')) return;
+    const endedAt = new Date(this.now()).toISOString();
+    this.store.update(state => {
+      state.pipelineRuns = (state.pipelineRuns || []).map(run => (
+        run && run.status === 'running'
+          ? { ...run, status: 'interrupted', outcome: 'service-restart', endedAt }
+          : run
+      ));
+      return state;
+    });
+  }
+
+  createPipelineRun(session, pipeline, destinations) {
+    const run = {
+      id: createId('run'),
+      pipelineId: session.pipelineId,
+      pipeline: reportPipelineSnapshot(pipeline),
+      source: reportSourceSnapshot(session.source),
+      destinations: destinations.map(reportDestinationSnapshot),
+      startedAt: new Date(session.startedAt).toISOString(),
+      endedAt: '',
+      status: 'running',
+      outcome: '',
+      stopMode: '',
+      active: null,
+      outputs: [],
+      program: session.program ? { ...session.program } : null,
+    };
+    if (typeof this.store.update === 'function') {
+      this.store.update(state => {
+        state.pipelineRuns = [...(state.pipelineRuns || []), run].slice(-500);
+        return state;
+      });
+    }
+    return run.id;
+  }
+
+  finalizePipelineRun(session, { stopMode = 'discard', outcome = 'stopped' } = {}) {
+    if (!session || !session.runId || session.runFinalized || typeof this.store.update !== 'function') return;
+    const endedAtMs = this.now();
+    let active = null;
+    try { active = this.describeSession(session, { now: endedAtMs, historyMode: 'none' }); } catch {}
+    const outputs = (active && active.outputs || []).map(({ history, ...output }) => ({
+      ...output,
+      lastOperationalStatus: output.status || 'running',
+      status: 'stopped',
+      uptimeSec: Math.max(0, Math.floor((endedAtMs - session.startedAt) / 1000)),
+    }));
+    const endedAt = new Date(endedAtMs).toISOString();
+    this.store.update(state => {
+      state.pipelineRuns = (state.pipelineRuns || []).map(run => (
+        run.id === session.runId
+          ? {
+              ...run,
+              endedAt,
+              status: outcome,
+              outcome,
+              stopMode,
+              active: active ? { ...active, status: outcome, outputs } : null,
+              outputs,
+              program: active && active.program || run.program || null,
+            }
+          : run
+      ));
+      return state;
+    });
+    session.runFinalized = true;
   }
 
   appendLog(state, line) {
@@ -1993,6 +2118,8 @@ class ProcessManager {
       transitioning: false,
       intentionalStop: false,
       stopPromise: null,
+      runId: '',
+      runFinalized: false,
       liveDelayBuffer: null,
       relayBridge: null,
       liveDelayChannel: null,
@@ -2017,6 +2144,7 @@ class ProcessManager {
       throw error;
     }
 
+    session.runId = this.createPipelineRun(session, pipeline, destinations);
     this.store.patch('pipelines', pipelineId, { status: 'running', lastStartedAt: new Date().toISOString() });
     return this.describeSession(session);
   }
@@ -2289,6 +2417,7 @@ class ProcessManager {
 
   finishPipelineStop(session) {
     if (this.sessions.get(session.pipelineId) !== session) return;
+    this.finalizePipelineRun(session, { stopMode: session.reportStopMode || 'drain' });
     this.stopOutputProcesses(session);
     session.liveDelayBuffer = null;
     session.relayBridge = null;
@@ -2314,6 +2443,7 @@ class ProcessManager {
         return { ok: true, status: 'draining', liveDelay: session.liveDelayBuffer.describe() };
       }
       session.intentionalStop = true;
+      session.reportStopMode = 'drain';
       this.clearFallbackRecovery(session);
       session.status = 'draining';
       this.store.patch('pipelines', pipelineId, { status: 'draining' });
@@ -2334,7 +2464,9 @@ class ProcessManager {
     }
 
     session.intentionalStop = true;
+    session.reportStopMode = mode;
     this.clearFallbackRecovery(session);
+    this.finalizePipelineRun(session, { stopMode: mode });
     const delayedShutdown = Boolean(this.relayBufferFor(session));
     const shutdowns = this.stopSessionProcesses(session);
     const shutdownPromise = Promise.allSettled(shutdowns);

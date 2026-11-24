@@ -17,7 +17,7 @@ const { createSystemStatusCollector } = require('./lib/systemStatus');
 const { MediaAssetManager } = require('./lib/mediaAssets');
 const { StudioManager } = require('./lib/studioManager');
 const { createLogManager } = require('./lib/logManager');
-const { createPipelineReport } = require('./lib/pipelineReport');
+const { createPipelineReport, listPipelineRunReports } = require('./lib/pipelineReport');
 const { detectEncoderCapabilities } = require('./lib/encoderCapabilities');
 const {
   SESSION_TTL_MS,
@@ -733,6 +733,34 @@ async function handleApi(req, res, url, {
       throw error;
     }
     return json(res, 200, logManager.delete(selected));
+  }
+
+  if (url.pathname === '/api/reports/runs' && req.method === 'GET') {
+    return json(res, 200, { runs: listPipelineRunReports(store) });
+  }
+
+  if (parts[0] === 'reports' && parts[1] === 'runs' && parts[2] && req.method === 'GET') {
+    const runId = decodeURIComponent(parts[2]);
+    const run = listPipelineRunReports(store).find(item => item.id === runId);
+    if (!run) {
+      const error = new Error('未找到这次运行报告');
+      error.statusCode = 404;
+      throw error;
+    }
+    const destinationId = String(url.searchParams.get('destinationId') || '');
+    const pdf = createPipelineReport({
+      store, manager, logManager, pipelineId: run.pipelineId, destinationId, runId,
+    });
+    const filename = destinationId
+      ? `streamhub-run-${runId}-output-${destinationId}.pdf`
+      : `streamhub-run-${runId}-pipeline.pdf`;
+    res.writeHead(200, {
+      'content-type': 'application/pdf',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'cache-control': 'no-store',
+      'content-length': pdf.length,
+    });
+    return res.end(pdf);
   }
 
   if (parts[0] === 'reports' && parts[1] === 'pipelines' && parts[2] && req.method === 'GET') {

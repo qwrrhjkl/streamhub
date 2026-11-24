@@ -7,10 +7,10 @@ const path = require('node:path');
 const { StreamHubStore, defaultState } = require('../server/lib/store');
 const { createRoomRecord } = require('../server/lib/rooms');
 
-test('defaultState is a clean version 6 deployment on RTMP port 1935', () => {
+test('defaultState is a clean version 7 deployment on RTMP port 1935', () => {
   const state = defaultState();
 
-  assert.equal(state.version, 6);
+  assert.equal(state.version, 7);
   assert.equal(state.settings.rtmpPort, 1935);
   assert.equal(state.settings.logRetentionDays, 7);
   assert.equal(state.settings.recordingRetentionDays, 30);
@@ -18,6 +18,7 @@ test('defaultState is a clean version 6 deployment on RTMP port 1935', () => {
   assert.deepEqual(state.sources, []);
   assert.deepEqual(state.destinations, []);
   assert.deepEqual(state.pipelines, []);
+  assert.deepEqual(state.pipelineRuns, []);
   assert.deepEqual(state.monitorDisplay, { dropBaselines: {} });
 });
 
@@ -48,7 +49,7 @@ test('StreamHubStore persists room names secrets and settings across reload', ()
   }
 });
 
-test('StreamHubStore migrates old state to version 6 without injecting demo data', () => {
+test('StreamHubStore migrates old state to version 7 without injecting demo data', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'streamhub-migrate-'));
   try {
     const dataDir = path.join(dir, 'data');
@@ -65,7 +66,8 @@ test('StreamHubStore migrates old state to version 6 without injecting demo data
     const store = new StreamHubStore(dir);
     const migrated = store.getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
+    assert.deepEqual(migrated.pipelineRuns, []);
     assert.equal(migrated.settings.logRetentionDays, 7);
     assert.equal(migrated.settings.recordingRetentionDays, 30);
     assert.deepEqual(migrated.rooms, []);
@@ -120,7 +122,7 @@ test('StreamHubStore preserves an explicit copy encoder while migrating version 
     const store = new StreamHubStore(dir);
     const migrated = store.getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
     assert.equal(migrated.pipelines[0].settings.live.videoEncoder, 'copy');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -146,7 +148,7 @@ test('StreamHubStore preserves explicit copy and libx264 encoders while migratin
 
     const migrated = new StreamHubStore(dir).getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
     assert.deepEqual(
       migrated.pipelines.map(pipeline => pipeline.settings.live.videoEncoder),
       ['copy', 'libx264'],
@@ -172,7 +174,7 @@ test('StreamHubStore gives legacy version 3 pipelines without an encoder the lib
 
     const migrated = new StreamHubStore(dir).getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
     assert.equal(migrated.pipelines[0].settings.live.videoEncoder, 'libx264');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -229,7 +231,7 @@ test('StreamHubStore preserves non-object settings containers through migration 
     const migrated = new StreamHubStore(dir).getState();
     const reloaded = new StreamHubStore(dir).getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
     assert.deepEqual(migrated.pipelines, pipelines);
     assert.deepEqual(reloaded.pipelines, pipelines);
   } finally {
@@ -295,7 +297,7 @@ test('StreamHubStore recovers invalid and nonpositive versions as legacy version
 
       const migrated = new StreamHubStore(dir).getState();
 
-      assert.equal(migrated.version, 6);
+      assert.equal(migrated.version, 7);
       assert.deepEqual(migrated.rooms, []);
       assert.deepEqual(migrated.destinations, []);
       assert.deepEqual(migrated.pipelines[0], pipeline);
@@ -321,21 +323,21 @@ test('StreamHubStore preserves an explicit h264_nvenc encoder during version 4 m
 
     const migrated = new StreamHubStore(dir).getState();
 
-    assert.equal(migrated.version, 6);
+    assert.equal(migrated.version, 7);
     assert.equal(migrated.pipelines[0].settings.live.videoEncoder, 'h264_nvenc');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('StreamHubStore migrates version 5 state once without rewriting encoder values', () => {
+test('StreamHubStore migrates version 6 state once without rewriting encoder values', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'streamhub-reload-v4-'));
   try {
     const dataDir = path.join(dir, 'data');
     const statePath = path.join(dataDir, 'state.json');
     fs.mkdirSync(dataDir, { recursive: true });
     const serialized = `${JSON.stringify({
-      version: 5,
+      version: 6,
       updatedAt: '2026-07-25T00:00:00.000Z',
       settings: { webPort: 18080 },
       rooms: [],
@@ -349,7 +351,7 @@ test('StreamHubStore migrates version 5 state once without rewriting encoder val
     const migratedSerialized = fs.readFileSync(statePath, 'utf8');
     const secondReload = new StreamHubStore(dir).getState();
 
-    assert.equal(firstReload.version, 6);
+    assert.equal(firstReload.version, 7);
     assert.equal(firstReload.settings.logRetentionDays, 7);
     assert.equal(firstReload.settings.recordingRetentionDays, 30);
     assert.equal(firstReload.pipelines[0].settings.live.videoEncoder, 'copy');
@@ -372,7 +374,7 @@ test('StreamHubStore leaves future finite state versions untouched', () => {
       settings: { vendorBlock: { version: 5 }, live: { vendorTune: 'future' } },
     };
     const serialized = `${JSON.stringify({
-      version: 7,
+      version: 8,
       updatedAt: '2026-07-25T00:00:00.000Z',
       settings: { webPort: 18080 },
       monitorDisplay: { dropBaselines: {}, futurePanel: { enabled: true } },
@@ -385,7 +387,7 @@ test('StreamHubStore leaves future finite state versions untouched', () => {
 
     const loaded = new StreamHubStore(dir).getState();
 
-    assert.equal(loaded.version, 7);
+    assert.equal(loaded.version, 8);
     assert.deepEqual(loaded.pipelines[0], pipeline);
     assert.deepEqual(loaded.monitorDisplay.futurePanel, { enabled: true });
     assert.equal(fs.readFileSync(statePath, 'utf8'), serialized);
@@ -482,7 +484,7 @@ test('StreamHubStore strips removed fields from version 4 monitor display baseli
 
     const reloaded = new StreamHubStore(dir).getState();
     const secondReload = new StreamHubStore(dir).getState();
-    assert.equal(reloaded.version, 6);
+    assert.equal(reloaded.version, 7);
     assert.deepEqual(reloaded.monitorDisplay.dropBaselines['pipe-a-dest-a'], {
       resetAt: 1000,
       processSessionId: 'session-a',

@@ -36,7 +36,7 @@ function sanitizeDropBaselines(value) {
 
 function defaultState() {
   return {
-    version: 6,
+    version: 7,
     updatedAt: new Date().toISOString(),
     settings: {
       appName: 'StreamHub',
@@ -59,6 +59,7 @@ function defaultState() {
     mediaAssets: [],
     scenes: [],
     recordingJobs: [],
+    pipelineRuns: [],
   };
 }
 
@@ -94,6 +95,7 @@ function buildLoadedState(parsed, base) {
     mediaAssets: Array.isArray(parsed.mediaAssets) ? parsed.mediaAssets : base.mediaAssets,
     scenes: Array.isArray(parsed.scenes) ? parsed.scenes : base.scenes,
     recordingJobs: Array.isArray(parsed.recordingJobs) ? parsed.recordingJobs : base.recordingJobs,
+    pipelineRuns: Array.isArray(parsed.pipelineRuns) ? parsed.pipelineRuns : base.pipelineRuns,
     monitorDisplay: {
       ...base.monitorDisplay,
       ...parsedMonitorDisplay,
@@ -109,8 +111,8 @@ function buildLoadedState(parsed, base) {
       : base.pipelines.map(migratePipelineSettingsForVersionFour);
   }
 
-  if (parsedVersion < 6) {
-    state.version = 6;
+  if (parsedVersion < 7) {
+    state.version = 7;
     return { state, migrated: true };
   }
 

@@ -1,10 +1,10 @@
 const { mergeSettings } = require('./ffmpegBuilder');
 
-const REPORT_PAGE_LIMIT = 5;
 const PAGE_WIDTH = 596;
 const PAGE_HEIGHT = 842;
 const PAGE_MARGIN = 48;
 const CONTENT_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2;
+const CONTENT_BOTTOM = 66;
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const ACTIVE_OUTPUT_STATUSES = new Set(['running', 'starting', 'fallback', 'draining']);
 
@@ -122,6 +122,18 @@ function taskRuntimeTimeline(model = {}, now = new Date()) {
       };
     }
   }
+  const runStartedAtMs = validTimeMs(model.run && model.run.startedAt);
+  const runEndedAtMs = validTimeMs(model.run && model.run.endedAt);
+  if (runStartedAtMs !== null && runEndedAtMs !== null && runEndedAtMs >= runStartedAtMs) {
+    return {
+      startedAt: formatBeijingTime(runStartedAtMs),
+      endedAt: formatBeijingTime(runEndedAtMs),
+      duration: formatDurationSec((runEndedAtMs - runStartedAtMs) / 1000),
+      ongoing: false,
+      startedAtMs: runStartedAtMs,
+      endedAtMs: runEndedAtMs,
+    };
+  }
   return streamRuntimeTimeline({
     output: { status: 'stopped' },
     pipeline: model.pipeline || {},
@@ -200,12 +212,19 @@ function summarizeLogEntry(logManager, entry) {
   };
 }
 
-function collectReportLogs(logManager, { pipelineId, destinationId = '', includeRelay = false }) {
+function collectReportLogs(logManager, {
+  pipelineId, destinationId = '', includeRelay = false, startedAt = '', endedAt = '',
+}) {
   if (!logManager || typeof logManager.list !== 'function') return [];
   let entries = [];
   try {
     entries = logManager.list().filter(entry => {
       if (entry.pipelineId !== pipelineId) return false;
+      const timestamp = validTimeMs(entry.timestamp);
+      const from = validTimeMs(startedAt);
+      const to = validTimeMs(endedAt);
+      if (from !== null && (timestamp === null || timestamp < from - 1000)) return false;
+      if (to !== null && (timestamp === null || timestamp > to + 1000)) return false;
       if (destinationId) return entry.kind === 'destination' && entry.destinationId === destinationId;
       return includeRelay && entry.kind === 'relay';
     });
@@ -215,8 +234,60 @@ function collectReportLogs(logManager, { pipelineId, destinationId = '', include
   return entries.slice(0, 8).map(entry => summarizeLogEntry(logManager, entry));
 }
 
-function reportModel({ store, manager, logManager, pipelineId, destinationId = '' }) {
+function reportModel({ store, manager, logManager, pipelineId, destinationId = '', runId = '' }) {
   const state = store.getState();
+  const run = runId
+    ? (state.pipelineRuns || []).find(item => item.id === runId)
+    : null;
+  if (runId && !run) {
+    const error = new Error('Run report not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (run) {
+    const runPipeline = run.pipeline || { id: run.pipelineId, name: run.pipelineId, settings: {} };
+    if (pipelineId && pipelineId !== run.pipelineId) {
+      const error = new Error('Run report does not belong to pipeline');
+      error.statusCode = 404;
+      throw error;
+    }
+    const scopedDestinations = destinationId
+      ? (run.destinations || []).filter(item => item.id === destinationId)
+      : (run.destinations || []);
+    if (destinationId && scopedDestinations.length === 0) {
+      const error = new Error('Destination not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    const logRange = { startedAt: run.startedAt, endedAt: run.endedAt };
+    const streams = scopedDestinations.map(destination => ({
+      destination,
+      output: (run.outputs || []).find(output => output.destination && output.destination.id === destination.id) || null,
+      logs: collectReportLogs(logManager, {
+        pipelineId: run.pipelineId, destinationId: destination.id, ...logRange,
+      }),
+    }));
+    const relayLogs = destinationId ? [] : collectReportLogs(logManager, {
+      pipelineId: run.pipelineId, includeRelay: true, ...logRange,
+    });
+    return {
+      scope: destinationId ? 'destination' : 'pipeline',
+      run,
+      pipeline: {
+        ...runPipeline,
+        lastStartedAt: run.startedAt,
+        lastStoppedAt: run.endedAt,
+      },
+      source: run.source || null,
+      destinations: scopedDestinations,
+      program: run.program || null,
+      active: run.active || null,
+      outputs: streams.map(stream => stream.output).filter(Boolean),
+      logs: [...relayLogs, ...streams.flatMap(stream => stream.logs)],
+      streams,
+      relayLogs,
+    };
+  }
   const pipelines = Array.isArray(state.pipelines) ? state.pipelines : [];
   const pipeline = pipelines.find(item => item.id === pipelineId);
   if (!pipeline) {
@@ -288,6 +359,14 @@ function statusLabel(value) {
   return labels[status] || formatValue(value, '未知');
 }
 
+function stopModeLabel(run) {
+  if (!run) return '-';
+  if (run.outcome === 'service-restart' || run.status === 'interrupted') return '服务中断';
+  if (run.stopMode === 'drain') return '播完延时后停止';
+  if (run.stopMode === 'discard') return '立即停止';
+  return formatValue(run.outcome || run.status);
+}
+
 function encodingLabel(output, settings) {
   const mode = String(output && output.encodingMode || '').toLowerCase();
   if (mode === 'copy') return 'copy';
@@ -296,46 +375,88 @@ function encodingLabel(output, settings) {
   return settings.live.videoEncoder || 'auto';
 }
 
-function assessStreamQuality(output = {}) {
+function normalizeReportOutput(output = {}) {
+  const metrics = output.metrics && typeof output.metrics === 'object' ? output.metrics : {};
+  const normalized = { ...metrics, ...output };
+  if (normalized.encoderSpeed == null && metrics.speed != null) {
+    normalized.encoderSpeed = metrics.speed;
+  }
+  return normalized;
+}
+
+function assessStreamQuality(output = {}, evidence = {}) {
+  output = normalizeReportOutput(output);
   const status = String(output.status || 'stopped').toLowerCase();
-  if (status === 'error') return { level: '异常', reasons: ['输出进程处于异常状态。'] };
-  if (!['running', 'starting', 'fallback', 'draining'].includes(status)) {
-    return { level: '数据不足', reasons: ['输出尚未运行，没有可用于质量判断的实时采样。'] };
+  const operationalStatus = String(output.lastOperationalStatus || status).toLowerCase();
+  const logs = evidence.logs || {};
+  if (status === 'error' || operationalStatus === 'error') {
+    return { level: '异常', basis: '进程状态', reasons: ['输出进程记录为异常状态。'] };
   }
 
   const severe = [];
   const attention = [];
   const shortfall = finiteNumber(output.transportShortfallPercent);
-  const recentDropRate = finiteNumber(output.recentDropRatePercent ?? output.dropRatePercent) || 0;
-  const totalDropRate = finiteNumber(output.totalDropRatePercent) || 0;
+  const recentDropRate = finiteNumber(output.recentDropRatePercent ?? output.dropRatePercent);
+  const totalDropRate = finiteNumber(output.totalDropRatePercent);
   const corruptPackets = finiteNumber(output.corruptPackets) || 0;
   const udpOverruns = finiteNumber(output.udpOverruns) || 0;
   const actualFps = finiteNumber(output.fps ?? output.measuredFps);
   const targetFps = finiteNumber(output.targetFps);
+  const actualBitrate = finiteNumber(output.bitrateKbps);
+  const sampleAvailable = output.actualBitrateAvailable === true
+    || (actualBitrate !== null && actualBitrate > 0)
+    || (actualFps !== null && actualFps > 0)
+    || output.networkDropAvailable === true;
   const fpsDeviation = actualFps !== null && targetFps && targetFps > 0
     ? Math.abs(actualFps - targetFps) / targetFps * 100
     : null;
 
   if (corruptPackets > 0) severe.push(`检测到 ${corruptPackets} 个损坏包。`);
-  if (recentDropRate >= 3) severe.push(`近期丢帧率 ${metricNumber(recentDropRate, '%')}。`);
+  if (recentDropRate !== null && recentDropRate >= 3) severe.push(`近期丢帧率 ${metricNumber(recentDropRate, '%')}。`);
   if (output.networkLossActive && shortfall !== null && shortfall >= 50) {
     severe.push(`网络码率不足 ${metricNumber(shortfall, '%')}。`);
   }
+  if (Number(logs.errors) > 0) severe.push(`日志摘要检出 ${logs.errors} 条错误关键字。`);
   if (severe.length) return { level: '异常', reasons: severe };
 
-  if (output.actualBitrateAvailable !== true) {
-    return { level: '数据不足', reasons: ['实时传输码率尚未形成有效采样。'] };
-  }
   if (shortfall !== null && shortfall >= 30) attention.push(`网络码率不足 ${metricNumber(shortfall, '%')}。`);
   if (fpsDeviation !== null && fpsDeviation >= 5) attention.push(`FPS 偏差 ${metricNumber(fpsDeviation, '%')}。`);
-  if (recentDropRate > 0) attention.push(`近期丢帧率 ${metricNumber(recentDropRate, '%')}。`);
-  if (totalDropRate >= 0.1) attention.push(`累计丢帧率 ${metricNumber(totalDropRate, '%')}。`);
+  if (recentDropRate !== null && recentDropRate > 0) attention.push(`近期丢帧率 ${metricNumber(recentDropRate, '%')}。`);
+  if (totalDropRate !== null && totalDropRate >= 0.1) attention.push(`累计丢帧率 ${metricNumber(totalDropRate, '%')}。`);
   if (udpOverruns > 0) attention.push(`UDP overrun ${udpOverruns} 次。`);
   if (output.networkLossActive) attention.push('网络损失检测已触发。');
-  if (attention.length) return { level: '需关注', reasons: attention };
+  if (Number(logs.warnings) > 0) attention.push(`日志摘要检出 ${logs.warnings} 条警告关键字。`);
+  if (attention.length) return { level: '需关注', basis: sampleAvailable ? '运行指标与日志' : '日志摘要', reasons: attention };
+
+  const runObserved = evidence.runObserved === true
+    || Number(evidence.durationSec) > 0
+    || Number(logs.files) > 0;
+  if (!sampleAvailable) {
+    if (ACTIVE_OUTPUT_STATUSES.has(status)
+      || (!runObserved && ACTIVE_OUTPUT_STATUSES.has(operationalStatus))) {
+      return {
+        level: '采样中',
+        basis: Number(logs.files) ? '进程状态与日志摘要' : '进程状态',
+        reasons: ['输出进程已运行，当前尚未形成有效码率或 FPS 样本；待样本生成后可补充性能判断。'],
+      };
+    }
+    if (runObserved) {
+      return {
+        level: '未见明显故障',
+        basis: '运行记录与日志摘要',
+        reasons: [
+          '本次运行记录已保存，日志摘要未检出错误或警告关键字。',
+          '未取得有效码率、FPS 或网络丢失采样，因此结论仅覆盖进程与日志证据，不代表全程传输质量。',
+        ],
+      };
+    }
+    return { level: '未运行', basis: '运行状态', reasons: ['本次没有可识别的运行记录或日志，任务未形成可评估的输出链路。'] };
+  }
+
   return {
     level: '良好',
-    reasons: ['输出进程运行正常，当前采样未发现明显码率、帧率、丢帧或网络异常。'],
+    basis: '运行指标与日志摘要',
+    reasons: ['已取得有效运行样本，未发现达到告警阈值的码率、帧率、丢帧或网络异常。'],
   };
 }
 
@@ -343,15 +464,16 @@ function logStatistics(logs = []) {
   return {
     files: logs.length,
     lines: logs.reduce((sum, item) => sum + (Number(item.lines) || 0), 0),
+    sizeBytes: logs.reduce((sum, item) => sum + (Number(item.sizeBytes) || 0), 0),
     errors: logs.reduce((sum, item) => sum + (Number(item.errors) || 0), 0),
     warnings: logs.reduce((sum, item) => sum + (Number(item.warnings) || 0), 0),
     notable: logs.flatMap(item => item.notable || []).slice(0, 4),
   };
 }
 
-function streamReportDetails(stream, pipeline, now = new Date()) {
+function streamReportDetails(stream, pipeline, now = new Date(), run = null) {
   const settings = mergeSettings(pipeline.settings || {});
-  const output = stream.output || {};
+  const output = normalizeReportOutput(stream.output || {});
   const destination = stream.destination || {};
   const audioTrack = settings.audio.tracks[0] || {};
   const actualBitrate = finiteNumber(output.bitrateKbps);
@@ -364,23 +486,39 @@ function streamReportDetails(stream, pipeline, now = new Date()) {
   const fpsDeviation = actualFps !== null && targetFps && targetFps > 0
     ? (actualFps - targetFps) / targetFps * 100
     : null;
-  const quality = assessStreamQuality(output);
   const timeline = streamRuntimeTimeline({
     output,
-    pipeline,
+    pipeline: run ? {
+      ...pipeline,
+      lastStartedAt: run.startedAt || pipeline.lastStartedAt,
+      lastStoppedAt: run.endedAt || pipeline.lastStoppedAt,
+    } : pipeline,
     logs: stream.logs,
     now,
   });
+  const logs = logStatistics(stream.logs);
+  const quality = assessStreamQuality(output, {
+    logs,
+    runObserved: Boolean(run),
+    durationSec: finiteNumber(output.uptimeSec) || 0,
+  });
+  const lastStatus = String(output.lastOperationalStatus || '').toLowerCase();
+  const endedNormally = output.status === 'stopped'
+    && ['running', 'draining', 'fallback'].includes(lastStatus);
+  const actualBitrateAvailable = output.actualBitrateAvailable === true && actualBitrate !== null;
+  const fpsAvailable = actualFps !== null && actualFps > 0;
   return {
     destination: {
       id: destination.id || '-',
       name: formatValue(destination.name || destination.id),
       protocol: formatValue(destination.protocol || destination.type || 'rtmp').toUpperCase(),
       enabled: destination.enabled === false ? '已禁用' : '已启用',
-      target: formatValue(destination.server || destination.url || ''),
+      target: destination.server || destination.url ? '已配置，地址与密钥已隐藏' : '未提供目标地址',
     },
     runtime: {
-      status: statusLabel(output.status || (destination.enabled === false ? 'disabled' : 'stopped')),
+      status: endedNormally ? '已结束'
+        : run && output.status === 'stopped' ? '已停止'
+          : statusLabel(output.status || (destination.enabled === false ? 'disabled' : 'stopped')),
       rawStatus: output.status || 'stopped',
       uptime: timeline.duration,
       uptimeSec: finiteNumber(output.uptimeSec) || 0,
@@ -394,36 +532,52 @@ function streamReportDetails(stream, pipeline, now = new Date()) {
     video: {
       resolution: settings.video.outputResolution,
       encoder: encodingLabel(output, settings),
-      bitrate: metricNumber(actualBitrate, ' Kbps'),
+      bitrate: actualBitrateAvailable ? metricNumber(actualBitrate, ' Kbps') : '无有效采样',
       targetBitrate: metricNumber(targetBitrate, ' Kbps'),
       bitrateDeviation: signedPercent(bitrateDeviation),
-      bitrateAvailable: output.actualBitrateAvailable === true ? '可用' : '采样中/不可用',
-      fps: metricNumber(actualFps),
+      bitrateAvailable: actualBitrateAvailable ? '已采样' : '无有效采样',
+      fps: fpsAvailable ? metricNumber(actualFps) : '无有效采样',
       targetFps: metricNumber(targetFps),
       fpsDeviation: signedPercent(fpsDeviation),
-      encoderSpeed: metricNumber(output.encoderSpeed, 'x'),
+      encoderSpeed: finiteNumber(output.encoderSpeed) > 0 ? metricNumber(output.encoderSpeed, 'x') : '无有效采样',
     },
     audio: {
       encoder: output.encodingMode === 'copy' ? 'copy' : settings.live.audioEncoder,
       sampleRate: `${settings.audio.sampleRate} Hz`,
       channels: settings.audio.channels === 'mono' ? '单声道' : '立体声',
       bitrate: metricNumber(audioTrack.bitrateKbps, ' Kbps'),
-      status: output.status === 'running' ? '随输出进程运行' : '输出未运行',
+      status: endedNormally ? '本次输出已结束'
+        : ACTIVE_OUTPUT_STATUSES.has(output.status) ? '随输出进程运行'
+          : '依据任务音频配置',
     },
     quality,
     qualityMetrics: {
-      recentDrops: metricNumber(output.recentDroppedFrames ?? output.droppedFrames ?? 0),
-      recentDropRate: metricNumber(output.recentDropRatePercent ?? output.dropRatePercent ?? 0, '%'),
-      totalDrops: metricNumber(output.totalDroppedFrames ?? output.droppedFrames ?? 0),
-      totalDropRate: metricNumber(output.totalDropRatePercent ?? output.dropRatePercent ?? 0, '%'),
-      shortfall: metricNumber(output.transportShortfallPercent, '%'),
+      recentDrops: metricNumber(output.recentDroppedFrames ?? output.droppedFrames),
+      recentDropRate: metricNumber(output.recentDropRatePercent ?? output.dropRatePercent, '%'),
+      totalDrops: metricNumber(output.totalDroppedFrames),
+      totalDropRate: metricNumber(output.totalDropRatePercent, '%'),
+      shortfall: actualBitrateAvailable ? metricNumber(output.transportShortfallPercent, '%') : '无有效采样',
       network: output.networkDropAvailable
         ? (output.networkLossActive ? '检测到网络损失' : '未检测到网络损失')
-        : '无可用网络损失采样',
-      udpOverruns: metricNumber(output.udpOverruns ?? 0),
-      corruptPackets: metricNumber(output.corruptPackets ?? 0),
+        : '未采集网络丢失样本',
+      udpOverruns: output.networkDropAvailable ? metricNumber(output.udpOverruns) : '未采样',
+      corruptPackets: output.networkDropAvailable ? metricNumber(output.corruptPackets) : '未采样',
     },
-    logs: logStatistics(stream.logs),
+    logs,
+    profile: {
+      targetBitrate: metricNumber(targetBitrate, ' Kbps'),
+      targetFps: metricNumber(targetFps),
+      resolution: formatValue(settings.video.outputResolution),
+      videoEncoder: encodingLabel(output, settings),
+      audioEncoder: output.encodingMode === 'copy' ? 'copy' : formatValue(settings.live.audioEncoder),
+      audioSampleRate: `${settings.audio.sampleRate} Hz`,
+      audioChannels: settings.audio.channels === 'mono' ? '单声道' : '立体声',
+      audioBitrate: metricNumber(audioTrack.bitrateKbps, ' Kbps'),
+      liveDelay: settings.live.delayEnabled ? `${settings.live.delaySeconds} 秒` : '关闭',
+      watermarkCount: settings.watermarks.length,
+      slideshowCount: settings.slideshow.images.length,
+      audioTrackCount: settings.audio.tracks.length,
+    },
   };
 }
 
@@ -554,8 +708,8 @@ function drawWrapped(page, value, x, y, maxWidth, size = 9, color = COLORS.ink, 
 }
 
 function qualityColor(level) {
-  if (level === '良好') return COLORS.green;
-  if (level === '需关注') return COLORS.amber;
+  if (level === '良好' || level === '未见明显故障') return COLORS.green;
+  if (level === '需关注' || level === '采样中') return COLORS.amber;
   if (level === '异常') return COLORS.red;
   return COLORS.muted;
 }
@@ -565,18 +719,19 @@ function drawHeader(page, title, subtitle, now) {
   drawText(page, 'StreamHub', PAGE_MARGIN, 807, 18, COLORS.white);
   drawText(page, title, 154, 807, 18, COLORS.white);
   drawText(page, subtitle, PAGE_MARGIN, 779, 10, [0.84, 0.95, 0.98]);
-  drawText(page, `生成时间 ${now.toISOString().replace('T', ' ').slice(0, 19)} UTC`, 390, 779, 7.8, [0.84, 0.95, 0.98]);
+  drawText(page, `生成时间 ${formatBeijingTime(now)} 北京时间`, 390, 779, 7.8, [0.84, 0.95, 0.98]);
   page.y = 720;
 }
 
 function drawMetricCards(page, cards) {
   const gap = 8;
   const width = (CONTENT_WIDTH - gap * (cards.length - 1)) / cards.length;
+  const valueSize = cards.length >= 6 ? 9.5 : 11.5;
   cards.forEach((card, index) => {
     const x = PAGE_MARGIN + index * (width + gap);
     rect(page, x, page.y - 56, width, 50, COLORS.pale);
     drawText(page, card.label, x + 9, page.y - 24, 7.3, COLORS.muted);
-    drawWrapped(page, card.value, x + 9, page.y - 43, width - 18, 11.5, card.color || COLORS.navy, 1);
+    drawWrapped(page, card.value, x + 9, page.y - 43, width - 18, valueSize, card.color || COLORS.navy, 1);
   });
   page.y -= 68;
 }
@@ -604,27 +759,79 @@ function drawFieldGrid(page, rows, { columns = 2, rowHeight = 29, valueSize = 8.
 
 function drawLogSummary(page, details) {
   drawFieldGrid(page, [
-    ['日志文件', String(details.logs.files)],
-    ['日志行数', String(details.logs.lines)],
-    ['错误关键字', String(details.logs.errors)],
-    ['警告关键字', String(details.logs.warnings)],
-  ], { rowHeight: 27 });
-  const notable = details.logs.notable.slice(0, 2);
+    ['匹配日志文件', details.logs.files ? String(details.logs.files) : '无'],
+    ['摘要行数', String(details.logs.lines)],
+    ['日志文件体积', details.logs.sizeBytes ? formatBytes(details.logs.sizeBytes) : '-'],
+    ['错误 / 警告关键字', `${details.logs.errors} / ${details.logs.warnings}`],
+  ], { rowHeight: 25 });
+  if (details.logs.files) {
+    drawWrapped(page, '范围：最多纳入 8 个关联日志文件，每个文件读取末尾 20 KB 摘要。', PAGE_MARGIN, page.y, CONTENT_WIDTH, 7, COLORS.muted, 1);
+    page.y -= 12;
+  }
+  const notable = details.logs.notable.slice(0, 3);
   if (notable.length) {
     drawText(page, '关键事件', PAGE_MARGIN, page.y, 7.2, COLORS.muted);
     page.y -= 13;
     notable.forEach(item => {
-      const used = drawWrapped(page, `- ${item}`, PAGE_MARGIN, page.y, CONTENT_WIDTH, 7.8, COLORS.ink, 1);
+      const used = drawWrapped(page, `- ${item}`, PAGE_MARGIN, page.y, CONTENT_WIDTH, 7.2, COLORS.ink, 2);
       page.y -= used + 2;
     });
+  } else if (!details.logs.files) {
+    drawText(page, '本次运行未找到可关联的任务或目标日志。', PAGE_MARGIN, page.y, 7.4, COLORS.muted);
+    page.y -= 12;
   }
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '-';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function pipelineProfile(pipeline = {}) {
+  const settings = mergeSettings(pipeline.settings || {});
+  const audio = settings.audio.tracks[0] || {};
+  return {
+    resolution: settings.video.outputResolution,
+    fps: settings.video.fps,
+    encoder: settings.live.videoEncoder,
+    preset: settings.live.preset,
+    bitrate: settings.live.bitrateKbps,
+    audioEncoder: settings.live.audioEncoder,
+    audioSampleRate: settings.audio.sampleRate,
+    channels: settings.audio.channels === 'mono' ? '单声道' : '立体声',
+    audioBitrate: audio.bitrateKbps,
+    audioTracks: settings.audio.tracks.length,
+    liveDelay: settings.live.delayEnabled ? `${settings.live.delaySeconds} 秒` : '关闭',
+    watermarks: settings.watermarks.length,
+    slideshowImages: settings.slideshow.images.length,
+    noSignalImage: Boolean(settings.noSignalImage),
+  };
+}
+
+function drawQualityBand(page, quality) {
+  const body = quality.reasons.join(' ');
+  const rows = wrapText(body, CONTENT_WIDTH - 24, 7.6, 3);
+  const height = Math.max(47, 28 + rows.length * 11);
+  const top = page.y;
+  const fill = quality.level === '异常' ? [1, 0.94, 0.94]
+    : quality.level === '需关注' || quality.level === '采样中' ? [1, 0.97, 0.89]
+      : [0.93, 0.97, 0.95];
+  rect(page, PAGE_MARGIN, top - height, CONTENT_WIDTH, height, fill);
+  drawText(page, `结论：${quality.level}  |  依据：${quality.basis || '-'}`, PAGE_MARGIN + 12, top - 16, 8.2, qualityColor(quality.level));
+  drawWrapped(page, body, PAGE_MARGIN + 12, top - 31, CONTENT_WIDTH - 24, 7.6, COLORS.ink, 3, 3);
+  page.y -= height + 8;
 }
 
 function buildDestinationReport(model, now) {
   const page = buildPage();
-  const pages = [page];
+  const evidencePage = buildPage();
+  const pages = [page, evidencePage];
   const stream = model.streams[0] || { destination: {}, output: null, logs: [] };
-  const details = streamReportDetails(stream, model.pipeline, now);
+  const details = streamReportDetails(stream, model.pipeline, now, model.run);
+  const profile = pipelineProfile(model.pipeline);
   drawHeader(
     page,
     '单路推流运行报告',
@@ -632,72 +839,96 @@ function buildDestinationReport(model, now) {
     now,
   );
   drawMetricCards(page, [
-    { label: '输出状态', value: details.runtime.status },
+    { label: '本次状态', value: details.runtime.status },
     { label: '推流时长', value: details.runtime.uptime },
-    { label: '当前码率', value: details.video.bitrate },
-    { label: '当前 FPS', value: details.video.fps },
-    { label: '质量结论', value: details.quality.level, color: qualityColor(details.quality.level) },
+    { label: '采样码率', value: details.video.bitrate },
+    { label: '采样 FPS', value: details.video.fps },
+    { label: '质量判断', value: details.quality.level, color: qualityColor(details.quality.level) },
   ]);
 
-  drawSection(page, '1. 链路信息');
+  drawSection(page, '1. 运行批次');
   drawFieldGrid(page, [
+    ['任务名称', model.pipeline.name || model.pipeline.id],
     ['任务 ID', model.pipeline.id],
-    ['输出 ID', details.destination.id],
+    ['运行批次', model.run && model.run.id || '-'],
+    ['停止方式', stopModeLabel(model.run)],
     ['开始时间', details.runtime.startedAt],
     ['结束时间/状态', details.runtime.endedAt],
-    ['平台名称', details.destination.name],
-    ['协议', details.destination.protocol],
     ['输入源', pipelineInputSummary(model.pipeline, model.source)],
+    ['分发模式 / 实际编码', `${model.pipeline.mode || '-'} / ${details.runtime.encodingMode}`],
+  ], { rowHeight: 25 });
+
+  drawSection(page, '2. 输出链路与媒体配置');
+  drawFieldGrid(page, [
+    ['目标平台', details.destination.name],
+    ['平台 ID / 协议', `${details.destination.id} / ${details.destination.protocol}`],
+    ['推流地址', details.destination.target],
+    ['启用状态', details.destination.enabled],
     ['当前 Program', model.program ? `${model.program.kind || '-'} / ${model.program.sourceLabel || model.program.mediaName || '-'}` : '-'],
-    ['分发模式', model.pipeline.mode || '-'],
-    ['实际编码模式', details.runtime.encodingMode],
-  ], { rowHeight: 27 });
+    ['视频规格', `${profile.resolution} / ${profile.fps} FPS / ${profile.bitrate} Kbps`],
+    ['视频编码', `${details.video.encoder} / ${profile.preset}`],
+    ['音频规格', `${details.audio.encoder} / ${profile.audioSampleRate} Hz / ${profile.channels} / ${profile.audioBitrate} Kbps`],
+    ['延时 / 画面层', `${profile.liveDelay} / 水印 ${profile.watermarks} / 幻灯片 ${profile.slideshowImages}`],
+  ], { rowHeight: 25 });
 
-  drawSection(page, '2. 视频状态');
-  drawFieldGrid(page, [
-    ['分辨率', details.video.resolution],
-    ['视频编码器', details.video.encoder],
-    ['当前 / 目标码率', `${details.video.bitrate} / ${details.video.targetBitrate}`],
-    ['码率偏差', details.video.bitrateDeviation],
-    ['当前 / 目标 FPS', `${details.video.fps} / ${details.video.targetFps}`],
-    ['FPS 偏差', details.video.fpsDeviation],
-    ['码率采样', details.video.bitrateAvailable],
-    ['编码速度', details.video.encoderSpeed],
-  ], { rowHeight: 27 });
+  drawHeader(evidencePage, '质量结论与运行证据', `${details.destination.name} / ${details.destination.protocol}`, now);
+  drawMetricCards(evidencePage, [
+    { label: '结论', value: details.quality.level, color: qualityColor(details.quality.level) },
+    { label: '运行日志', value: String(details.logs.files) },
+    { label: '错误关键字', value: String(details.logs.errors), color: details.logs.errors ? COLORS.red : COLORS.navy },
+    { label: '警告关键字', value: String(details.logs.warnings), color: details.logs.warnings ? COLORS.amber : COLORS.navy },
+  ]);
 
-  drawSection(page, '3. 音频状态');
-  drawFieldGrid(page, [
-    ['音频编码器', details.audio.encoder],
-    ['采样率', details.audio.sampleRate],
-    ['声道', details.audio.channels],
-    ['音频码率', details.audio.bitrate],
-    ['链路状态', details.audio.status],
-  ], { rowHeight: 27 });
-
-  drawSection(page, '4. 质量与日志');
-  drawFieldGrid(page, [
+  drawQualityBand(evidencePage, details.quality);
+  drawSection(evidencePage, '3. 质量指标与采样覆盖');
+  drawFieldGrid(evidencePage, [
+    ['采样码率 / 目标', `${details.video.bitrate} / ${details.video.targetBitrate}`],
+    ['采样 FPS / 目标', `${details.video.fps} / ${details.video.targetFps}`],
     ['近期丢帧', `${details.qualityMetrics.recentDrops} / ${details.qualityMetrics.recentDropRate}`],
     ['累计丢帧', `${details.qualityMetrics.totalDrops} / ${details.qualityMetrics.totalDropRate}`],
     ['码率不足', details.qualityMetrics.shortfall],
     ['网络状态', details.qualityMetrics.network],
     ['UDP overrun', details.qualityMetrics.udpOverruns],
     ['损坏包', details.qualityMetrics.corruptPackets],
-  ], { rowHeight: 26 });
-  drawText(page, '质量依据', PAGE_MARGIN, page.y, 7.2, COLORS.muted);
-  page.y -= 13;
-  const reasonText = details.quality.reasons.join(' ');
-  page.y -= drawWrapped(page, reasonText, PAGE_MARGIN, page.y, CONTENT_WIDTH, 8.2, qualityColor(details.quality.level), 2) + 4;
-  drawLogSummary(page, details);
+  ], { rowHeight: 24 });
+
+  drawSection(evidencePage, '4. 日志摘要');
+  drawLogSummary(evidencePage, details);
+  drawWrapped(
+    evidencePage,
+    '结论口径：优先依据本次运行批次的进程状态、输出采样与关联日志。未采集到的指标显示为“无有效采样”，不会按 0 参与结论。日志摘要仅覆盖末尾片段，完整原始日志可在控制台下载查看。',
+    PAGE_MARGIN,
+    evidencePage.y,
+    CONTENT_WIDTH,
+    7,
+    COLORS.muted,
+    3,
+  );
+  evidencePage.y -= 38;
   return pages;
 }
 
 function taskStatus(model) {
-  return statusLabel(model.active && model.active.status || model.pipeline.status || 'stopped');
+  const runStatus = String(model.run && (model.run.outcome || model.run.status) || '').toLowerCase();
+  if (runStatus === 'interrupted' || runStatus === 'service-restart') return '服务中断';
+  if (runStatus === 'error' || runStatus === 'failed') return '异常';
+  if (runStatus === 'stopped') return '已停止';
+  return statusLabel(model.active && model.active.status || model.pipeline.status || runStatus || 'stopped');
 }
 
-function drawComparisonTable(page, model, now) {
+function overallQuality(details = []) {
+  const levels = details.map(item => item.quality.level);
+  if (!levels.length || levels.every(level => level === '未运行')) return '未运行';
+  if (levels.includes('异常')) return '异常';
+  if (levels.includes('需关注')) return '需关注';
+  if (levels.includes('良好')) return levels.includes('未见明显故障') ? '未见明显故障' : '良好';
+  if (levels.includes('采样中')) return '采样中';
+  return '未见明显故障';
+}
+
+function drawComparisonTable(page, model, now, details) {
   const columns = [
-    ['平台', 112], ['状态', 54], ['时长', 62], ['码率', 72], ['FPS', 48], ['累计丢帧', 75], ['质量', 57],
+    ['平台', 105], ['状态', 52], ['时长', 62], ['采样码率', 77], ['FPS', 46], ['丢帧率', 66], ['判断', 62],
   ];
   let x = PAGE_MARGIN;
   rect(page, PAGE_MARGIN, page.y - 21, CONTENT_WIDTH, 21, COLORS.pale);
@@ -706,131 +937,161 @@ function drawComparisonTable(page, model, now) {
     x += width;
   });
   page.y -= 24;
-  model.streams.forEach(stream => {
-    const details = streamReportDetails(stream, model.pipeline, now);
-    const values = [
-      details.destination.name,
-      details.runtime.status,
-      details.runtime.uptime,
-      details.video.bitrate,
-      details.video.fps,
-      details.qualityMetrics.totalDropRate,
-      details.quality.level,
-    ];
+  const visibleStreams = model.streams.slice(0, 6);
+  visibleStreams.forEach((stream, streamIndex) => {
+    const detail = details[streamIndex] || streamReportDetails(stream, model.pipeline, now, model.run);
+    const values = [detail.destination.name, detail.runtime.status, detail.runtime.uptime,
+      detail.video.bitrate, detail.video.fps, detail.qualityMetrics.totalDropRate, detail.quality.level];
     x = PAGE_MARGIN;
     values.forEach((value, index) => {
       const width = columns[index][1];
-      drawWrapped(page, value, x + 4, page.y - 12, width - 8, 7.2, index === 6 ? qualityColor(details.quality.level) : COLORS.ink, 1);
+      drawWrapped(page, value, x + 4, page.y - 12, width - 8, 7.2, index === 6 ? qualityColor(detail.quality.level) : COLORS.ink, 1);
       x += width;
     });
     line(page, PAGE_MARGIN, page.y - 20, PAGE_WIDTH - PAGE_MARGIN, page.y - 20, COLORS.line, 0.4);
     page.y -= 23;
   });
+  if (model.streams.length > visibleStreams.length) {
+    page.y -= 7;
+    drawText(page, `其余 ${model.streams.length - visibleStreams.length} 路输出详见后续逐路详情。`, PAGE_MARGIN, page.y, 7.2, COLORS.muted);
+    page.y -= 12;
+  }
 }
 
-function drawStreamBlock(page, model, stream, height, now) {
-  const details = streamReportDetails(stream, model.pipeline, now);
-  const top = page.y;
-  const compact = height < 190;
-  const valueSize = compact ? 7.2 : 7.8;
-  rect(page, PAGE_MARGIN, top - height + 4, CONTENT_WIDTH, height - 4, [0.975, 0.985, 0.99]);
-  rect(page, PAGE_MARGIN, top - 27, CONTENT_WIDTH, 27, COLORS.pale);
-  drawText(page, details.destination.name, PAGE_MARGIN + 10, top - 18, compact ? 10 : 11, COLORS.navy);
-  drawText(page, details.destination.protocol, PAGE_MARGIN + 210, top - 18, 7.5, COLORS.muted);
-  drawText(page, details.runtime.status, PAGE_MARGIN + 286, top - 18, 8, COLORS.ink);
-  drawText(page, details.runtime.uptime, PAGE_MARGIN + 360, top - 18, 8, COLORS.ink);
-  drawText(page, details.quality.level, PAGE_MARGIN + 444, top - 18, 8.5, qualityColor(details.quality.level));
+function drawStreamPage(page, model, stream, details, now, index) {
+  drawHeader(page, '逐路输出质量报告', `${index + 1} / ${model.streams.length}  ${details.destination.name}`, now);
+  drawMetricCards(page, [
+    { label: '输出状态', value: details.runtime.status },
+    { label: '推流时长', value: details.runtime.uptime },
+    { label: '采样码率', value: details.video.bitrate },
+    { label: '采样 FPS', value: details.video.fps },
+    { label: '质量判断', value: details.quality.level, color: qualityColor(details.quality.level) },
+  ]);
 
-  let y = top - 44;
-  const rows = [
-    `时间：开始 ${details.runtime.startedAt} / 时长 ${details.runtime.uptime} / 结束 ${details.runtime.endedAt}`,
-    `视频：${details.video.resolution} / ${details.video.encoder} / ${details.video.bitrate}（目标 ${details.video.targetBitrate}，偏差 ${details.video.bitrateDeviation}） / ${details.video.fps} FPS（目标 ${details.video.targetFps}）`,
-    `音频：${details.audio.encoder} / ${details.audio.sampleRate} / ${details.audio.channels} / ${details.audio.bitrate} / ${details.audio.status}`,
-    `质量：近期丢帧 ${details.qualityMetrics.recentDrops}（${details.qualityMetrics.recentDropRate}），累计 ${details.qualityMetrics.totalDrops}（${details.qualityMetrics.totalDropRate}），码率不足 ${details.qualityMetrics.shortfall}`,
-    `网络：${details.qualityMetrics.network}，UDP overrun ${details.qualityMetrics.udpOverruns}，损坏包 ${details.qualityMetrics.corruptPackets}`,
-    `日志：${details.logs.files} 个文件，${details.logs.lines} 行，错误 ${details.logs.errors}，警告 ${details.logs.warnings}`,
-  ];
-  rows.forEach(row => {
-    const used = drawWrapped(page, row, PAGE_MARGIN + 10, y, CONTENT_WIDTH - 20, valueSize, COLORS.ink, 1);
-    y -= used + (compact ? 2 : 4);
-  });
-  drawWrapped(
-    page,
-    `结论依据：${details.quality.reasons.join(' ')}`,
-    PAGE_MARGIN + 10,
-    y,
-    CONTENT_WIDTH - 20,
-    valueSize,
-    qualityColor(details.quality.level),
-    compact ? 1 : 2,
-  );
-  page.y = top - height;
+  drawSection(page, '1. 输出链路');
+  drawFieldGrid(page, [
+    ['目标平台', details.destination.name],
+    ['目标 ID / 协议', `${details.destination.id} / ${details.destination.protocol}`],
+    ['推流地址', details.destination.target],
+    ['开始 / 结束', `${details.runtime.startedAt} / ${details.runtime.endedAt}`],
+    ['输入源', pipelineInputSummary(model.pipeline, model.source)],
+    ['Program / 分发模式', `${model.program ? model.program.kind || '-' : '-'} / ${model.pipeline.mode || '-'}`],
+  ], { rowHeight: 25 });
+
+  drawSection(page, '2. 编码与媒体规格');
+  drawFieldGrid(page, [
+    ['视频规格', `${details.video.resolution} / 目标 ${details.video.targetFps} FPS`],
+    ['编码器 / 模式', `${details.video.encoder} / ${details.runtime.encodingMode}`],
+    ['采样 / 目标码率', `${details.video.bitrate} / ${details.video.targetBitrate}`],
+    ['码率偏差 / 编码速度', `${details.video.bitrateDeviation} / ${details.video.encoderSpeed}`],
+    ['采样 / 目标 FPS', `${details.video.fps} / ${details.video.targetFps}`],
+    ['音频规格', `${details.audio.encoder} / ${details.audio.sampleRate} / ${details.audio.channels}`],
+    ['音频码率 / 状态', `${details.audio.bitrate} / ${details.audio.status}`],
+    ['延时 / 画面层', `${details.profile.liveDelay} / 水印 ${details.profile.watermarkCount} / 幻灯片 ${details.profile.slideshowCount}`],
+  ], { rowHeight: 24 });
+
+  drawSection(page, '3. 质量指标与判定');
+  drawFieldGrid(page, [
+    ['近期丢帧 / 比率', `${details.qualityMetrics.recentDrops} / ${details.qualityMetrics.recentDropRate}`],
+    ['累计丢帧 / 比率', `${details.qualityMetrics.totalDrops} / ${details.qualityMetrics.totalDropRate}`],
+    ['网络码率不足', details.qualityMetrics.shortfall],
+    ['网络丢失样本', details.qualityMetrics.network],
+    ['UDP overrun', details.qualityMetrics.udpOverruns],
+    ['损坏包', details.qualityMetrics.corruptPackets],
+  ], { rowHeight: 24 });
+  drawQualityBand(page, details.quality);
+
+  drawSection(page, '4. 运行日志证据');
+  drawLogSummary(page, details);
 }
 
 function buildPipelineReport(model, now) {
   const pages = [buildPage()];
   const overview = pages[0];
   drawHeader(overview, '分发任务运行报告', formatValue(model.pipeline.name || model.pipeline.id), now);
-  const details = model.streams.map(stream => streamReportDetails(stream, model.pipeline, now));
+  const details = model.streams.map(stream => streamReportDetails(stream, model.pipeline, now, model.run));
   const taskTimeline = taskRuntimeTimeline(model, now);
-  const running = details.filter(item => item.runtime.rawStatus === 'running').length;
-  const totalBitrate = model.streams.reduce((sum, stream) => sum + (finiteNumber(stream.output && stream.output.bitrateKbps) || 0), 0);
-  const measuredFps = model.streams
-    .map(stream => finiteNumber(stream.output && (stream.output.fps ?? stream.output.measuredFps)))
+  const running = details.filter(item => ['运行中', '启动中', '无信号回退中', '延时排空中'].includes(item.runtime.status)).length;
+  const normalizedOutputs = model.streams.map(stream => normalizeReportOutput(stream.output || {}));
+  const sampledBitrates = normalizedOutputs
+    .filter(output => output.actualBitrateAvailable === true)
+    .map(output => finiteNumber(output.bitrateKbps))
     .filter(value => value !== null);
+  const totalBitrate = sampledBitrates.length ? sampledBitrates.reduce((sum, value) => sum + value, 0) : null;
+  const measuredFps = normalizedOutputs
+    .map(output => finiteNumber(output.fps ?? output.measuredFps))
+    .filter(value => value !== null && value > 0);
   const averageFps = measuredFps.length ? measuredFps.reduce((sum, value) => sum + value, 0) / measuredFps.length : null;
+  const summaryQuality = overallQuality(details);
+  const profile = pipelineProfile(model.pipeline);
   drawMetricCards(overview, [
     { label: '任务状态', value: taskStatus(model) },
     { label: '输出数量', value: String(model.streams.length) },
-    { label: '运行输出', value: String(running) },
-    { label: '总码率', value: metricNumber(totalBitrate, ' Kbps') },
-    { label: '平均 FPS', value: metricNumber(averageFps) },
+    { label: '活动链路', value: String(running) },
+    { label: '采样总码率', value: totalBitrate === null ? '无有效采样'
+      : totalBitrate >= 1000 ? metricNumber(totalBitrate / 1000, ' Mbps') : metricNumber(totalBitrate, ' Kbps') },
+    { label: '平均 FPS', value: averageFps === null ? '无有效采样' : metricNumber(averageFps) },
+    { label: '综合质量判断', value: summaryQuality, color: qualityColor(summaryQuality) },
   ]);
 
-  drawSection(overview, '1. 任务总览');
+  drawSection(overview, '1. 任务运行摘要');
   drawFieldGrid(overview, [
     ['任务 ID', model.pipeline.id],
+    ['运行批次', model.run && model.run.id || '-'],
     ['输入源', pipelineInputSummary(model.pipeline, model.source)],
+    ['停止方式', stopModeLabel(model.run)],
     ['开始时间', taskTimeline.startedAt],
-    ['推送时长', taskTimeline.duration],
-    ['结束时间/状态', taskTimeline.endedAt],
+    ['结束时间 / 推流时长', `${taskTimeline.endedAt} / ${taskTimeline.duration}`],
     ['当前 Program', model.program ? `${model.program.kind || '-'} / ${model.program.sourceLabel || model.program.mediaName || '-'}` : '-'],
-    ['分发模式', model.pipeline.mode || '-'],
-  ], { rowHeight: 26 });
+    ['任务状态 / 分发模式', `${taskStatus(model)} / ${model.pipeline.mode || '-'}`],
+  ], { rowHeight: 25 });
 
-  drawSection(overview, '2. 输出对比');
-  drawComparisonTable(overview, model, now);
+  drawSection(overview, '2. 任务编码配置');
+  drawFieldGrid(overview, [
+    ['视频输出', `${profile.resolution} / ${profile.fps} FPS / ${profile.bitrate} Kbps`],
+    ['视频编码', `${profile.encoder} / ${profile.preset}`],
+    ['音频配置', `${profile.audioEncoder} / ${profile.audioSampleRate} Hz / ${profile.channels} / ${profile.audioBitrate} Kbps`],
+    ['延时与画面处理', `${profile.liveDelay} / 水印 ${profile.watermarks} / 幻灯片 ${profile.slideshowImages} / 无信号图 ${profile.noSignalImage ? '已配置' : '未配置'}`],
+  ], { rowHeight: 25 });
+
+  drawSection(overview, '3. 各目标输出对比');
+  drawComparisonTable(overview, model, now, details);
   if (model.relayLogs.length) {
     const relayStats = logStatistics(model.relayLogs);
     overview.y -= 6;
-    drawText(
+    drawWrapped(
       overview,
-      `共享转推日志：${relayStats.files} 个文件，${relayStats.lines} 行，错误 ${relayStats.errors}，警告 ${relayStats.warnings}`,
+      `共享中继证据：${relayStats.files} 个日志文件，摘要 ${relayStats.lines} 行，错误 ${relayStats.errors}，警告 ${relayStats.warnings}。`
+        + '每个日志只统计末尾 20 KB 摘要，完整原始日志未纳入本 PDF。',
       PAGE_MARGIN,
       overview.y,
+      CONTENT_WIDTH,
       7.8,
       COLORS.muted,
+      2,
     );
+    overview.y -= 21;
   }
 
-  if (model.streams.length) {
-    const detailPageCount = Math.min(REPORT_PAGE_LIMIT - 1, Math.max(1, Math.ceil(model.streams.length / 2)));
-    const perPage = Math.ceil(model.streams.length / detailPageCount);
-    for (let offset = 0; offset < model.streams.length; offset += perPage) {
-      const page = buildPage();
-      pages.push(page);
-      drawHeader(page, '逐路输出详细状态', `${formatValue(model.pipeline.name || model.pipeline.id)} / ${offset + 1}-${Math.min(offset + perPage, model.streams.length)}`, now);
-      page.y = 724;
-      const batch = model.streams.slice(offset, offset + perPage);
-      const blockHeight = Math.min(300, Math.floor(650 / Math.max(1, batch.length)));
-      batch.forEach(stream => drawStreamBlock(page, model, stream, blockHeight, now));
-    }
+  if (!model.streams.length) {
+    drawQualityBand(overview, {
+      level: '未运行',
+      basis: '任务运行记录',
+      reasons: ['本次任务记录未包含输出目标，无法形成逐路质量判断。'],
+    });
   }
-  return pages.slice(0, REPORT_PAGE_LIMIT);
+
+  for (let index = 0; index < model.streams.length; index += 1) {
+    const page = buildPage();
+    pages.push(page);
+    drawStreamPage(page, model, model.streams[index], details[index], now, index);
+  }
+  return pages;
 }
 
 function addFooters(pages, pipelineId) {
   pages.forEach((page, index) => {
+    if (page.y < CONTENT_BOTTOM) throw new Error(`Report page ${index + 1} content exceeded the footer boundary`);
     line(page, PAGE_MARGIN, 44, PAGE_WIDTH - PAGE_MARGIN, 44, COLORS.line, 0.4);
     drawText(page, `StreamHub | ${pipelineId}`, PAGE_MARGIN, 28, 7.2, COLORS.muted);
     drawText(page, `${index + 1} / ${pages.length}`, 515, 28, 7.2, COLORS.muted);
@@ -883,14 +1144,38 @@ function renderPdf(pages) {
   return Buffer.from(chunks.join(''), 'binary');
 }
 
-function createPipelineReport({ store, manager, logManager, pipelineId, destinationId, now }) {
-  return buildPipelineReportPdf(reportModel({ store, manager, logManager, pipelineId, destinationId }), now);
+function listPipelineRunReports(store) {
+  const state = store.getState();
+  return (state.pipelineRuns || [])
+    .filter(run => run && run.id && run.pipelineId && run.endedAt)
+    .map(run => ({
+      id: run.id,
+      pipelineId: run.pipelineId,
+      pipelineName: run.pipeline && (run.pipeline.name || run.pipeline.id) || run.pipelineId,
+      startedAt: run.startedAt || '',
+      endedAt: run.endedAt || '',
+      status: run.status || run.outcome || 'stopped',
+      stopMode: run.stopMode || '',
+      destinations: (run.destinations || []).map(destination => ({
+        id: destination.id,
+        name: destination.name || destination.id,
+        protocol: destination.protocol || destination.type || 'rtmp',
+      })),
+    }))
+    .sort((left, right) => (validTimeMs(right.startedAt) || 0) - (validTimeMs(left.startedAt) || 0));
+}
+
+function createPipelineReport({ store, manager, logManager, pipelineId, destinationId, runId, now }) {
+  return buildPipelineReportPdf(reportModel({
+    store, manager, logManager, pipelineId, destinationId, runId,
+  }), now);
 }
 
 module.exports = {
   assessStreamQuality,
   buildPipelineReportPdf,
   createPipelineReport,
+  listPipelineRunReports,
   reportModel,
   sanitizeReportText,
   streamRuntimeTimeline,
