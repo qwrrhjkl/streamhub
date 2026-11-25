@@ -141,8 +141,8 @@ function mergeSettings(input) {
   const delayEnabled = liveInput.delayEnabled === true;
   const parsedDelaySeconds = Number(liveInput.delaySeconds ?? DEFAULT_SETTINGS.live.delaySeconds);
   const delaySeconds = Number.isInteger(parsedDelaySeconds) ? parsedDelaySeconds : DEFAULT_SETTINGS.live.delaySeconds;
-  if (delayEnabled && (delaySeconds < 1 || delaySeconds > 300)) {
-    throw settingsValidationError('直播延时必须在 1 至 300 秒之间');
+  if (delayEnabled && (delaySeconds < 1 || delaySeconds > 600)) {
+    throw settingsValidationError('直播延时必须在 1 至 600 秒之间');
   }
   return {
     live: {

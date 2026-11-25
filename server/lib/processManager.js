@@ -1539,7 +1539,6 @@ class ProcessManager {
       }
       if (!session.previewMirror) session.previewMirror = createPreviewMirrorChannel(session.pipelineId);
       if (!session.recordingMirror) session.recordingMirror = createRecordingMirrorChannel(session.pipelineId);
-      const channels = Array.from(session.relayChannels.values());
       if (!session.liveDelayChannel) session.liveDelayChannel = createLiveDelayChannel(session.pipelineId);
       const delayEnabled = session.settings.live.delayEnabled === true;
       const relayBuffer = this.relayBufferFor(session);
@@ -1547,7 +1546,12 @@ class ProcessManager {
         const buffer = this.liveDelayFactory({
           delaySeconds: delayEnabled ? session.settings.live.delaySeconds : 0,
           inputPort: session.liveDelayChannel.port,
-          outputPorts: channels.map(channel => channel.port),
+          // 只把已启用的目标端口交给延时缓冲，禁用目标不会启动转推输出，
+          // 否则 outputsReady() 永远等不齐全部端口，延时内容无法下发。
+          outputPorts: destinations
+            .map(destination => session.relayChannels.get(destination.id))
+            .filter(Boolean)
+            .map(channel => channel.port),
           udpOutputPorts: [session.previewMirror.port, session.recordingMirror.port],
           memoryBudget: this.liveDelayMemoryBudget,
           inputTransport: 'tcp-server',

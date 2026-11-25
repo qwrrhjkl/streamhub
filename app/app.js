@@ -2233,8 +2233,8 @@ function settingsFromForm(form) {
   const fd = new FormData(form);
   const delayEnabled = Boolean(form && form.elements && form.elements.delayEnabled && form.elements.delayEnabled.checked);
   const delaySeconds = Number(formControlValue(form, fd, 'delaySeconds', 20));
-  if (delayEnabled && (!Number.isInteger(delaySeconds) || delaySeconds < 1 || delaySeconds > 300)) {
-    throw new Error('直播延时必须在 1 至 300 秒之间');
+  if (delayEnabled && (!Number.isInteger(delaySeconds) || delaySeconds < 1 || delaySeconds > 600)) {
+    throw new Error('直播延时必须在 1 至 600 秒之间');
   }
   const intervalMs = Number(fd.get('slideshowIntervalMs') || 2000);
   if (!Number.isFinite(intervalMs) || intervalMs < 500 || intervalMs > 60000) {

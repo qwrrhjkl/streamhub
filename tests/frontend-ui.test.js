@@ -538,7 +538,7 @@ test('distribution form exposes live delay controls and three explicit stop choi
   const pipelineForm = formMarkup('pipelineForm');
   assert.match(pipelineForm, /<h3>直播延时<\/h3>/);
   assert.match(pipelineForm, /<input[^>]+name="delayEnabled"[^>]+type="checkbox"/);
-  assert.match(pipelineForm, /<input[^>]+name="delaySeconds"[^>]+type="number"[^>]+value="20"[^>]+min="1"[^>]+max="300"/);
+  assert.match(pipelineForm, /<input[^>]+name="delaySeconds"[^>]+type="number"[^>]+value="20"[^>]+min="1"[^>]+max="600"/);
   assert.match(pipelineForm, /id="liveDelayMemoryEstimate"[^>]+aria-live="polite"/);
   assert.match(html, /<dialog[^>]+id="liveDelayStopDialog"[^>]+aria-labelledby="liveDelayStopTitle"/);
   assert.match(html, /<button[^>]+id="drainLiveDelayBtn"[^>]*>停止直播<\/button>/);

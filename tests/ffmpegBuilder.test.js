@@ -110,11 +110,11 @@ test('mergeSettings defaults live delay off and validates enabled delay seconds'
   );
   assert.throws(
     () => mergeSettings({ live: { delayEnabled: true, delaySeconds: 0 } }),
-    /直播延时必须在 1 至 300 秒之间/,
+    /直播延时必须在 1 至 600 秒之间/,
   );
   assert.throws(
-    () => mergeSettings({ live: { delayEnabled: true, delaySeconds: 301 } }),
-    /直播延时必须在 1 至 300 秒之间/,
+    () => mergeSettings({ live: { delayEnabled: true, delaySeconds: 601 } }),
+    /直播延时必须在 1 至 600 秒之间/,
   );
 });
 
