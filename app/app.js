@@ -3730,7 +3730,7 @@ function drawDashboardNetworkChart(canvas, history) {
     const ratio = i / 4; const y = top + height * ratio; const rate = max * (1 - ratio);
     ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
     ctx.fillStyle = themeColor('--ui-chart-label', '#687982'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(formatSystemNetworkRate(rate / 8, '0 bps'), left - 8, y);
+    ctx.fillText(formatSystemNetworkRate(rate, '0 bps'), left - 8, y);
   }
   const draw = (key, color) => {
     const points = pointsInWindow.map(point => ({ x: left + ((point.time - start) / DASHBOARD_NETWORK_WINDOW_MS) * width, y: top + height - (Number(point[key]) || 0) / max * height })).filter(point => Number.isFinite(point.y));

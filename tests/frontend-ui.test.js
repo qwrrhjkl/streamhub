@@ -1821,6 +1821,8 @@ test('network summaries details and chart labels use bit rates', () => {
   assert.match(appFunctionSource('systemDetailRows'), /formatSystemNetworkRate\(data\.totalBytesPerSec\)/);
   assert.match(appFunctionSource('systemPrimaryValue'), /formatSystemNetworkRate\(resource\.value\)/);
   assert.match(appFunctionSource('renderSystemDetail'), /formatSystemNetworkRate\(maxValue, '--'\)/);
+  assert.match(appFunctionSource('drawDashboardNetworkChart'), /formatSystemNetworkRate\(rate, '0 bps'\)/);
+  assert.doesNotMatch(appFunctionSource('drawDashboardNetworkChart'), /formatSystemNetworkRate\(rate \/ 8/);
 });
 
 test('process status defaults to CPU and selects the server-ranked top ten', () => {
