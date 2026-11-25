@@ -433,6 +433,7 @@ let checkedGithubUpdate = null;
 let githubUpdatePending = false;
 let editingRoomId = null;
 let editingPipelineId = null;
+let pipelineReadOnly = false;
 let editingDestinationId = null;
 let selectedDestinationIds = [];
 let pipelineFormGeneration = 0;
@@ -2553,10 +2554,20 @@ function closeRoomForm() {
 function updatePipelineEditUi() {
   const editing = Boolean(editingPipelineId);
   const title = $('#pipelineForm h2');
-  if (title) title.textContent = editing ? '修改分发任务' : '创建分发任务';
-  $('#pipelineSubmitBtn').textContent = pipelineSubmitPending ? '正在保存...' : editing ? '保存修改' : '保存任务';
-  $('#pipelineSubmitBtn').disabled = pipelineSubmitPending;
-  $('#cancelPipelineEditBtn').hidden = !editing;
+  if (title) title.textContent = pipelineReadOnly ? '查看分发任务' : editing ? '修改分发任务' : '创建分发任务';
+  const submit = $('#pipelineSubmitBtn');
+  const cancel = $('#cancelPipelineEditBtn');
+  if (pipelineReadOnly) {
+    submit.hidden = true;
+    cancel.hidden = false;
+    cancel.textContent = '关闭';
+    return;
+  }
+  submit.hidden = false;
+  submit.textContent = pipelineSubmitPending ? '正在保存...' : editing ? '保存修改' : '保存任务';
+  submit.disabled = pipelineSubmitPending;
+  cancel.hidden = !editing;
+  cancel.textContent = '取消修改';
 }
 
 function setPipelineSubmitPending(pending) {
@@ -2564,9 +2575,29 @@ function setPipelineSubmitPending(pending) {
   updatePipelineEditUi();
 }
 
+function setPipelineFormReadOnly(readonly) {
+  pipelineReadOnly = Boolean(readonly);
+  const form = $('#pipelineForm');
+  if (!form) return;
+  form.classList.toggle('is-readonly', pipelineReadOnly);
+  const skipSelector = '#closePipelineFormBtn, [data-pipeline-section], #pipelinePreviousSectionBtn, #pipelineNextSectionBtn, #cancelPipelineEditBtn';
+  form.querySelectorAll('input, select, textarea, button').forEach(control => {
+    if (control.matches(skipSelector)) return;
+    if (pipelineReadOnly) {
+      control.dataset.roDisabled = control.disabled ? '1' : '0';
+      control.disabled = true;
+    } else {
+      control.disabled = control.dataset.roDisabled === '1';
+      delete control.dataset.roDisabled;
+    }
+  });
+  updatePipelineEditUi();
+}
+
 function resetPipelineForm() {
   advancePipelineFormGeneration();
   editingPipelineId = null;
+  setPipelineFormReadOnly(false);
   pipelineWatermarks = [];
   pipelineNoSignalImage = null;
   pipelineSlideshow = { images: [], intervalMs: 2000, transitionMs: 0, loop: true };
@@ -4405,7 +4436,7 @@ function renderPipelineCards() {
         </div>
         <div class="pipeline-card-actions">
           ${primaryAction}
-          <button class="icon-button" data-action="edit-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="修改任务" aria-label="修改 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="pencil" aria-hidden="true"></i></button>
+          <button class="icon-button" data-action="edit-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="${active ? '查看任务（运行中只读）' : '修改任务'}" aria-label="${active ? '查看' : '修改'} ${escapeHtml(p.name)}"><i data-lucide="pencil" aria-hidden="true"></i></button>
           <button class="icon-button" data-action="duplicate-pipeline" data-id="${escapeHtml(p.id)}" type="button" title="复制任务" aria-label="复制 ${escapeHtml(p.name)}"><i data-lucide="copy" aria-hidden="true"></i></button>
           <button class="pipeline-switcher-button icon-button" data-action="open-studio-switcher" data-id="${escapeHtml(p.id)}" type="button" ${switchable ? '' : 'disabled'} title="${switchable ? '打开画面切换台' : '共享转推任务运行后可打开切换台'}" aria-label="打开 ${escapeHtml(p.name)} 的画面切换台"><i data-lucide="arrow-right-left" aria-hidden="true"></i></button>
           <button class="danger icon-button" data-action="delete-item" data-collection="pipelines" data-id="${escapeHtml(p.id)}" type="button" title="删除任务" aria-label="删除 ${escapeHtml(p.name)}" ${active ? 'disabled' : ''}><i data-lucide="trash-2" aria-hidden="true"></i></button>
@@ -6283,7 +6314,9 @@ function editPipeline(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
   if (!pipeline) return uiAlert('未找到分发任务');
   if (['running', 'starting', 'fallback', 'draining'].includes(pipelineRuntimeStatus(pipeline))) {
-    return uiAlert('任务正在运行，请先停止后再修改');
+    pipelineReadOnly = true;
+  } else {
+    pipelineReadOnly = false;
   }
 
   advancePipelineFormGeneration();
@@ -6361,7 +6394,7 @@ function editPipeline(id) {
     $('#pipelineValidationSummary').textContent = '';
   }
   switchPipelineSection('basic', { focus: false });
-  updatePipelineEditUi();
+  setPipelineFormReadOnly(pipelineReadOnly);
   show('distribution');
   setPipelineFormVisible(true);
 }
@@ -6531,6 +6564,7 @@ $('#roomForm').addEventListener('submit', async event => {
 
 $('#pipelineForm').addEventListener('submit', async event => {
   event.preventDefault();
+  if (pipelineReadOnly) return uiAlert('任务正在运行，已切换为只读查看，如需修改请先停止任务');
   if (pipelineSubmitPending) return;
   const delayState = syncLiveDelayControls(event.target);
   const fd = new FormData(event.target);

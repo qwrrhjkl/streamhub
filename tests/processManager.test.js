@@ -94,7 +94,7 @@ test('a shared relay capture exit retries the original source before falling bac
 
   assert.equal(fallbackSchedules, 0);
   assert.equal(session.startupSourceRetries, 1);
-  assert.equal(scheduled[0].delay, 1500);
+  assert.equal(scheduled[0].delay, 1000);
   scheduled[0].callback();
   assert.equal(relayStarts, 1);
   assert.equal(fakeManager.store.patches.length, 1);
