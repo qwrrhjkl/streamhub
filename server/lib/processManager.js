@@ -40,7 +40,7 @@ const { prepareSlideshowCache } = require('./slideshowCache');
 const { prepareFallbackImage: prepareFallbackImageAsset } = require('./fallbackImageCache');
 const { resolveMediaBinaries } = require('./mediaBinaries');
 const { checkDecklinkAvailability } = require('./decklink');
-const { createRotatingLogWriter } = require('./rotatingLogWriter');
+const { compactUtcTimestamp, createRotatingLogWriter } = require('./rotatingLogWriter');
 const {
   TcpSocketStatsCollector,
   destinationSupportsTcpStats,
@@ -736,6 +736,42 @@ class ProcessManager {
     state.logFile = state.logWriter.append(line);
   }
 
+  runLogWriterFor(session, logName) {
+    const prefix = path.basename(String(logName || ''), '.log');
+    if (!prefix) throw new Error('日志文件名无效');
+    let writer = session && session.logWriters && session.logWriters.get(prefix);
+    if (!writer) {
+      writer = this.createLogWriter({
+        dir: this.logDir,
+        prefix,
+        now: this.now,
+        onRotate: (oldFile, newFile) => {
+          if (oldFile) this.activeLogFiles.delete(oldFile);
+          this.activeLogFiles.add(newFile);
+        },
+      });
+      if (session && session.logWriters) session.logWriters.set(prefix, writer);
+    }
+    return writer;
+  }
+
+  finalizeRunLogs(session) {
+    if (!session || !session.logWriters || !session.logWriters.size) return;
+    const endCompact = compactUtcTimestamp(this.now());
+    for (const writer of session.logWriters.values()) {
+      const currentFile = writer.currentFile;
+      if (currentFile && typeof currentFile === 'string' && path.basename(currentFile)) {
+        this.activeLogFiles.delete(currentFile);
+        if (!/~\d{8}T\d{6}Z\.log$/.test(path.basename(currentFile))) {
+          const renamed = currentFile.replace(/\.log$/, `~${endCompact}.log`);
+          try { fs.renameSync(currentFile, renamed); } catch {}
+        }
+      }
+      try { writer.close(); } catch {}
+    }
+    session.logWriters.clear();
+  }
+
   getActiveLogFiles() {
     return Array.from(this.activeLogFiles);
   }
@@ -846,16 +882,22 @@ class ProcessManager {
       progressAccumulator: createFFmpegProgressAccumulator(),
     };
     const logPrefix = path.basename(String(logName || ''), '.log');
-    state.logWriter = this.createLogWriter({
-      dir: this.logDir,
-      prefix: logPrefix,
-      now: this.now,
-      onRotate: (oldFile, newFile) => {
-        if (oldFile) this.activeLogFiles.delete(oldFile);
-        this.activeLogFiles.add(newFile);
-        state.logFile = newFile;
-      },
-    });
+    const sharedLogWriter = options.logWriter;
+    if (sharedLogWriter) {
+      state.logWriter = sharedLogWriter;
+      state.logFile = sharedLogWriter.currentFile || '';
+    } else {
+      state.logWriter = this.createLogWriter({
+        dir: this.logDir,
+        prefix: logPrefix,
+        now: this.now,
+        onRotate: (oldFile, newFile) => {
+          if (oldFile) this.activeLogFiles.delete(oldFile);
+          this.activeLogFiles.add(newFile);
+          state.logFile = newFile;
+        },
+      });
+    }
     let resolveExit;
     state.exitPromise = new Promise(resolve => { resolveExit = resolve; });
 
@@ -931,8 +973,10 @@ class ProcessManager {
       state.signal = signal;
       state.endedAt = Date.now();
       this.appendLog(state, `\n===== ${new Date().toISOString()} EXIT code=${code} signal=${signal || ''} =====\n`);
-      this.activeLogFiles.delete(state.logFile);
-      state.logWriter.close();
+      if (!options.logWriter) {
+        this.activeLogFiles.delete(state.logFile);
+        state.logWriter.close();
+      }
       resolveExit(state);
       if (onExit) onExit(state);
     });
@@ -1306,7 +1350,9 @@ class ProcessManager {
         encodingMode: session.encodingMode,
         processSessionId,
       };
-    }, process => this.handleSourceProcessExit(session, process));
+    }, process => this.handleSourceProcessExit(session, process), {
+      logWriter: this.runLogWriterFor(session, `${session.pipelineId}-${destination.id}.log`),
+    });
     this.startOutputMetricSampler(output, outputId, () => latestWorkerMetrics, destination);
     output.destination = destination;
     output.encodingMode = session.encodingMode;
@@ -1329,6 +1375,7 @@ class ProcessManager {
       `${session.pipelineId}-${destination.id}.log`,
       metrics => { latestWorkerMetrics = metrics; },
       process => this.handleRelayOutputExit(session, process),
+      { logWriter: this.runLogWriterFor(session, `${session.pipelineId}-${destination.id}.log`) },
     );
     this.startOutputMetricSampler(output, outputId, () => {
       if (!latestWorkerMetrics) return null;
@@ -1447,6 +1494,7 @@ class ProcessManager {
       undefined,
       onExit || (process => this.handleSourceProcessExit(session, process)),
       {
+        logWriter: this.runLogWriterFor(session, `${session.pipelineId}-relay.log`),
         onSourceFailure: onSourceFailure
           || ((process, message) => this.handleSourceFailureSignal(session, process, message)),
         onSourceRecovered: onSourceRecovered
@@ -2128,6 +2176,7 @@ class ProcessManager {
       relayBridge: null,
       liveDelayChannel: null,
       liveDelayReady: false,
+      logWriters: new Map(),
       program: {
         pipelineId,
         kind: 'original',
@@ -2423,6 +2472,7 @@ class ProcessManager {
     if (this.sessions.get(session.pipelineId) !== session) return;
     this.finalizePipelineRun(session, { stopMode: session.reportStopMode || 'drain' });
     this.stopOutputProcesses(session);
+    this.finalizeRunLogs(session);
     session.liveDelayBuffer = null;
     session.relayBridge = null;
     session.status = 'stopped';
@@ -2474,6 +2524,7 @@ class ProcessManager {
     const delayedShutdown = Boolean(this.relayBufferFor(session));
     const shutdowns = this.stopSessionProcesses(session);
     const shutdownPromise = Promise.allSettled(shutdowns);
+    shutdownPromise.finally(() => this.finalizeRunLogs(session));
     if (delayedShutdown) {
       const token = {};
       this.pendingPipelineShutdowns.set(pipelineId, token);

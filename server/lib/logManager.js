@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-const LOG_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.log(?:-(?:\d{8}T\d{6}Z?)|\.\d+|\.old)?$/;
+const LOG_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*\.log(?:-(?:\d{8}T\d{6}Z?)|\.\d+|\.old)?$/;
 const PIPELINE_ID = 'pipe-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*';
 const DESTINATION_ID = 'dest-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*';
 
@@ -25,6 +25,12 @@ function formatLocalTimestamp(iso) {
     + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+function timeRangeLabel(parsed) {
+  const start = formatLocalTimestamp(parsed.timestamp);
+  const end = parsed.endTimestamp ? formatLocalTimestamp(parsed.endTimestamp) : '';
+  return end ? `${start} ~ ${end}` : `${start} ~ 持续推流中`;
+}
+
 function timestampFromFilename(value) {
   const match = String(value).match(/(\d{8})T(\d{6})Z$/);
   if (!match) return null;
@@ -42,7 +48,7 @@ function parseLogFilename(filename) {
   const rotatedMatch = name.match(/^(.*)\.log-(\d{8}T\d{6}Z?)$/);
   const numericRotation = name.match(/^(.*)\.log\.(\d+)$/);
   const oldRotation = name.match(/^(.*)\.log\.old$/);
-  const timestampedMatch = name.match(/^(.*?)-(\d{8}T\d{6}Z)(?:-part-(\d+))?\.log$/);
+  const timestampedMatch = name.match(/^(.*?)-(\d{8}T\d{6}Z)(?:~(\d{8}T\d{6}Z))?(?:-part-(\d+))?\.log$/);
   const base = rotatedMatch ? `${rotatedMatch[1]}.log`
     : numericRotation ? `${numericRotation[1]}.log`
       : oldRotation ? `${oldRotation[1]}.log`
@@ -51,23 +57,24 @@ function parseLogFilename(filename) {
   const timestamp = rotatedMatch ? timestampFromFilename(rotatedMatch[2])
     : timestampedMatch ? timestampFromFilename(timestampedMatch[2])
       : null;
+  const endTimestamp = timestampedMatch && timestampedMatch[3] ? timestampFromFilename(timestampedMatch[3]) : null;
   const rotation = rotatedMatch ? 'dated'
     : numericRotation ? Number(numericRotation[2])
       : oldRotation ? 'old'
         : null;
 
   let match = base.match(new RegExp(`^(${PIPELINE_ID})-(${DESTINATION_ID})\\.log$`));
-  if (match) return { kind: 'destination', pipelineId: match[1], destinationId: match[2], timestamp, rotation };
+  if (match) return { kind: 'destination', pipelineId: match[1], destinationId: match[2], timestamp, endTimestamp, rotation };
   match = base.match(new RegExp(`^(${PIPELINE_ID})-relay\\.log$`));
-  if (match) return { kind: 'relay', pipelineId: match[1], timestamp, rotation };
+  if (match) return { kind: 'relay', pipelineId: match[1], timestamp, endTimestamp, rotation };
   match = base.match(/^preview-([A-Za-z0-9][A-Za-z0-9_-]*)\.log$/);
-  if (match) return { kind: 'preview', previewId: `preview-${match[1]}`, timestamp, rotation };
+  if (match) return { kind: 'preview', previewId: `preview-${match[1]}`, timestamp, endTimestamp, rotation };
   match = base.match(/^recording-([A-Za-z0-9][A-Za-z0-9_-]*)\.log$/);
-  if (match) return { kind: 'recording', recordingId: `recording-${match[1]}`, timestamp, rotation };
-  if (base === 'nginx-rtmp-access.log') return { kind: 'rtmp-access', timestamp, rotation, protected: !rotation };
-  if (base === 'nginx-rtmp-ingest-access.log') return { kind: 'rtmp-ingest', timestamp, rotation, protected: !rotation };
-  if (base === 'nginx-rtmp-error.log') return { kind: 'rtmp-error', timestamp, rotation, protected: !rotation };
-  return { kind: 'other', baseName: base, timestamp, rotation };
+  if (match) return { kind: 'recording', recordingId: `recording-${match[1]}`, timestamp, endTimestamp, rotation };
+  if (base === 'nginx-rtmp-access.log') return { kind: 'rtmp-access', timestamp, endTimestamp, rotation, protected: !rotation };
+  if (base === 'nginx-rtmp-ingest-access.log') return { kind: 'rtmp-ingest', timestamp, endTimestamp, rotation, protected: !rotation };
+  if (base === 'nginx-rtmp-error.log') return { kind: 'rtmp-error', timestamp, endTimestamp, rotation, protected: !rotation };
+  return { kind: 'other', baseName: base, timestamp, endTimestamp, rotation };
 }
 
 function safeLabel(value, fallback) {
@@ -103,9 +110,9 @@ function describeFile(filename, metadata = {}, store, previewLabel = '') {
   let displayName;
   if (parsed.kind === 'destination') {
     const destination = indexes.destinations.get(parsed.destinationId);
-    displayName = `${pipelineName} / ${safeLabel(destination && destination.name, fallbackEntity('平台', parsed.destinationId))} / ${formatLocalTimestamp(timestamp)}`;
+    displayName = `${pipelineName} / ${safeLabel(destination && destination.name, fallbackEntity('平台', parsed.destinationId))} / ${timeRangeLabel(parsed)}`;
   } else if (parsed.kind === 'relay') {
-    displayName = `${pipelineName} / 共享转推 / ${formatLocalTimestamp(timestamp)}`;
+    displayName = `${pipelineName} / 共享转推 / ${timeRangeLabel(parsed)}`;
   } else if (parsed.kind === 'preview') {
     displayName = `输入预览 / ${safeLabel(previewLabel, `已结束预览 ${parsed.previewId}`)} / ${formatLocalTimestamp(timestamp)}`;
   } else if (parsed.kind === 'recording') {

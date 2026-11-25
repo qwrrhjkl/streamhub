@@ -44,6 +44,22 @@ function viewerSafeState(value) {
   }));
 }
 
+function compactTimestamp(iso) {
+  return String(iso || '').replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function localTimeLabel(iso) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return '';
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function reportContentDisposition(displayName, asciiName) {
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(displayName)}`;
+}
+
 const ROOT = process.env.STREAMHUB_ROOT || path.resolve(__dirname, '..');
 const HOST = process.env.STREAMHUB_HOST || '0.0.0.0';
 const PORT = Number(process.env.STREAMHUB_PORT || 18080);
@@ -742,12 +758,17 @@ async function handleApi(req, res, url, {
     const pdf = createPipelineReport({
       store, manager, logManager, pipelineId: run.pipelineId, destinationId, runId,
     });
-    const filename = destinationId
-      ? `streamhub-run-${runId}-output-${destinationId}.pdf`
-      : `streamhub-run-${runId}-pipeline.pdf`;
+    const destination = destinationId
+      ? (run.destinations || []).find(item => item.id === destinationId)
+      : null;
+    const destinationSuffix = destinationId ? `-${destinationId}` : '';
+    const timeRange = `${compactTimestamp(run.startedAt)}~${compactTimestamp(run.endedAt)}`;
+    const asciiName = `streamhub-run-${run.pipelineId}-${timeRange}${destinationSuffix}.pdf`;
+    const displayName = `${run.pipelineName}${destination ? `-${destination.name}` : ''} `
+      + `${localTimeLabel(run.startedAt)}~${localTimeLabel(run.endedAt)}.pdf`;
     res.writeHead(200, {
       'content-type': 'application/pdf',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': reportContentDisposition(displayName, asciiName),
       'cache-control': 'no-store',
       'content-length': pdf.length,
     });
@@ -758,12 +779,19 @@ async function handleApi(req, res, url, {
     const pipelineId = decodeURIComponent(parts[2]);
     const destinationId = String(url.searchParams.get('destinationId') || '');
     const pdf = createPipelineReport({ store, manager, logManager, pipelineId, destinationId });
-    const filename = destinationId
+    const state = store.getState();
+    const pipeline = (state.pipelines || []).find(item => item.id === pipelineId);
+    const pipelineName = (pipeline && pipeline.name) || pipelineId;
+    const destination = destinationId
+      ? (state.destinations || []).find(item => item.id === destinationId)
+      : null;
+    const asciiName = destinationId
       ? `streamhub-output-report-${pipelineId}-${destinationId}.pdf`
       : `streamhub-pipeline-report-${pipelineId}.pdf`;
+    const displayName = `${pipelineName}${destination ? `-${destination.name}` : ''}.pdf`;
     res.writeHead(200, {
       'content-type': 'application/pdf',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': reportContentDisposition(displayName, asciiName),
       'cache-control': 'no-store',
       'content-length': pdf.length,
     });

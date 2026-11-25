@@ -73,4 +73,4 @@ function createRotatingLogWriter({
   };
 }
 
-module.exports = { DEFAULT_MAX_BYTES, createRotatingLogWriter };
+module.exports = { DEFAULT_MAX_BYTES, compactUtcTimestamp, createRotatingLogWriter };
