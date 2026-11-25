@@ -15,6 +15,6 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/opt/StreamHub /var/backups/streamhub /run/lock
-UMask=0027
+UMask=0022
 TimeoutStartSec=600
 TimeoutStopSec=120

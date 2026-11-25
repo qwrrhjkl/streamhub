@@ -67,7 +67,6 @@ rollback_update() {
     fi
     if ! systemctl is-active --quiet streamhub.service; then
       git_safe reset --hard "${CURRENT_COMMIT}" || rollback_ok=0
-      chown -R streamhub:streamhub "${APP_ROOT}" || rollback_ok=0
       systemctl daemon-reload || rollback_ok=0
     else
       rollback_ok=0
@@ -166,9 +165,6 @@ TREE_UPDATED=1
 if ! git_safe merge --ff-only --no-edit "${TARGET_COMMIT}"; then
   rollback_update '快进更新失败，已尝试恢复更新前版本。'
 fi
-# git 以 root 运行时重写文件会导致属主变成 root，服务用户 streamhub 无法读取；
-# 每次改动工作树后都恢复属主，避免服务因 EACCES 启动失败。
-chown -R streamhub:streamhub "${APP_ROOT}"
 if ! systemctl daemon-reload; then rollback_update '重新加载 systemd 配置失败，已回退代码。'; fi
 if ! systemctl start streamhub.service; then rollback_update '更新后服务无法启动，已回退代码。'; fi
 
