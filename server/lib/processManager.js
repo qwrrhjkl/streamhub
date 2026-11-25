@@ -2077,7 +2077,16 @@ class ProcessManager {
       this.store.patch('pipelines', session.pipelineId, { status: 'error' });
       return;
     }
-    if (!isSourceFailureMessage(process && (process.lastSourceError || process.lastError))) return;
+    const failureMessage = process && (process.lastSourceError || process.lastError);
+    // 启动竞态：ffmpeg 快速失败时 exit 事件可能先于 stderr 冲刷，lastSourceError 尚为空，
+    // 但非零退出码（如 DeckLink 打开失败 251）已经表明采集源异常，需按源失败继续重试/回退。
+    const exitCode = process && process.exitCode;
+    const captureExitFailure = session.mode === 'shared-relay'
+      && session.source
+      && session.source.type === 'capture'
+      && typeof exitCode === 'number'
+      && exitCode !== 0;
+    if (!isSourceFailureMessage(failureMessage) && !captureExitFailure) return;
     if (this.scheduleStartupSourceRetry(session, process)) return;
     this.scheduleSourceFailureFallback(session, process);
   }

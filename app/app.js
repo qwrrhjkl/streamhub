@@ -3666,6 +3666,14 @@ function pipelineRuntimeMessage(pipeline) {
   return '';
 }
 
+function pipelineCardStatusMessageSignature(pipeline) {
+  const active = state.monitor && (state.monitor.activePipelines || []).find(item => item.pipelineId === pipeline.id);
+  if (!active) return '';
+  if (active.status === 'draining') return 'draining';
+  if (active.status === 'fallback') return active.message || 'fallback';
+  return '';
+}
+
 function renderSummary() {
   const monitor = state.monitor || { totals: {} };
   const totalBitrate = formatActualBitrate({
@@ -4155,6 +4163,9 @@ function updatePipelineCardRuntime(pipelines = []) {
     const fps = document.querySelector(`[data-runtime-fps="${CSS.escape(pipeline.id)}"]`);
     if (bitrate) bitrate.textContent = summary.bitrate;
     if (fps) fps.textContent = summary.fps;
+    const message = pipelineRuntimeMessage(pipeline);
+    const alert = document.querySelector(`.pipeline-task-card[data-pipeline-id="${CSS.escape(pipeline.id)}"] .pipeline-card-alert`);
+    if (alert && message) alert.textContent = message;
   }
 }
 
@@ -4352,7 +4363,7 @@ function renderPipelineCards() {
     mode: p.mode,
     settings: p.settings,
     status: pipelineRuntimeStatus(p),
-    statusMessage: pipelineRuntimeMessage(p),
+    statusMessage: pipelineCardStatusMessageSignature(p),
     program: state.programs && state.programs[p.id],
     switchable: switchableIds.has(p.id),
   })));
