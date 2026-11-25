@@ -92,6 +92,23 @@ test('settings are grouped into tabs and the security audit feature is absent', 
   assert.match(css, /\.security-form label\{[^}]*grid-template-rows:18px 38px 16px/);
 });
 
+test('version updates use a public GitHub checkout with a separate restart confirmation', () => {
+  assert.match(html, /id="checkUpdateBtn"/);
+  assert.match(html, /id="applyUpdateBtn"[^>]+disabled hidden/);
+  assert.match(html, /id="applyUpdateDialog"[^>]+aria-labelledby="applyUpdateTitle"/);
+  assert.match(html, /id="confirmApplyUpdateBtn"/);
+  assert.match(html, /公开仓库，无需凭据/);
+  assert.match(html, /服务重启期间网页会短暂断开/);
+  assert.doesNotMatch(html, /GitHub Token|Personal Access Token|仓库密码/);
+  assert.match(app, /api\('\/api\/system-update-check'\)/);
+  assert.match(app, /api\('\/api\/system-update-status'\)/);
+  assert.match(app, /api\('\/api\/system-update'/);
+  assert.match(app, /targetCommit: checkedGithubUpdate\.latestCommit/);
+  assert.match(app, /\['工作树', result\.workingTreeClean \? '干净' : '有未提交改动'\]/);
+  assert.match(app, /检测到服务器有未提交改动或未跟踪文件/);
+  assert.match(css, /\.update-actions/);
+});
+
 test('settings tabs switch panels and non-admin roles stay in the account panel', () => {
   const nodes = {};
   for (const key of ['account', 'users', 'system', 'network', 'storage', 'logs', 'alerts', 'updates']) {

@@ -96,6 +96,31 @@ test('service installer validates Nginx as its runtime user', () => {
   );
 });
 
+test('GitHub updater is installed as a restricted root helper with narrow polkit access', () => {
+  const installer = fs.readFileSync(path.join(scriptsDir, '50-install-streamhub.sh'), 'utf8');
+  const updaterService = fs.readFileSync(path.join(root, 'services', 'streamhub-update.service'), 'utf8');
+  const updaterRule = fs.readFileSync(path.join(root, 'services', 'streamhub-update.rules'), 'utf8');
+  const updater = fs.readFileSync(path.join(scriptsDir, 'update-from-github.sh'), 'utf8');
+
+  assert.match(installer, /streamhub-update\.service/);
+  assert.match(installer, /51-streamhub-update\.rules/);
+  assert.match(updaterService, /^User=root$/m);
+  assert.match(updaterService, /^ProtectSystem=strict$/m);
+  assert.match(updaterService, /^ReadWritePaths=\/opt\/StreamHub \/var\/backups\/streamhub \/run\/lock$/m);
+  assert.doesNotMatch(updaterService, /^EnvironmentFile=/m);
+  assert.match(updaterRule, /subject\.user === 'streamhub'/);
+  assert.match(updaterRule, /action\.lookup\('unit'\) === 'streamhub-update\.service'/);
+  assert.doesNotMatch(updaterRule, /polkit\.Result\.YES[\s\S]*manage-all/);
+  assert.match(updater, /https:\/\/github\.com\/qwrrhjkl\/streamhub\.git/);
+  assert.doesNotMatch(updater, /git@github\.com|ssh:\/\/git@github\.com/);
+  assert.match(updater, /merge-base --is-ancestor/);
+  assert.match(fs.readFileSync(path.join(root, 'server', 'lib', 'githubUpdater.js'), 'utf8'), /safe\.directory=\$\{repoRoot\}/);
+  assert.match(fs.readFileSync(path.join(root, 'server', 'lib', 'githubUpdater.js'), 'utf8'), /status', '--porcelain', '--untracked-files=all/);
+  assert.match(updater, /git_safe bundle create/);
+  assert.match(updater, /healthy/);
+  assert.match(updater, /rollback_update/);
+});
+
 test('RTMP module uses a StreamHub-owned access log instead of the distro default', () => {
   const nginx = fs.readFileSync(path.join(root, 'services', 'nginx-rtmp.conf'), 'utf8');
   const rtmpSection = nginx.split('rtmp {')[1].split('\n}\n\nhttp {')[0];

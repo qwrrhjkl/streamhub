@@ -358,6 +358,8 @@ function initializePremiumInteractions() {
 let state = null;
 let systemShutdownPending = false;
 let systemShutdownAccepted = false;
+let checkedGithubUpdate = null;
+let githubUpdatePending = false;
 let editingRoomId = null;
 let editingPipelineId = null;
 let editingDestinationId = null;
@@ -717,10 +719,11 @@ async function loadSystemSettingsPanels(isAdmin) {
     ['SRT 预留', `UDP ${info.srtPort}（默认不监听）`],
     ['网卡', snapshot.network && snapshot.network.available ? `${snapshot.network.interfaces.length} 个接口` : '读取失败'],
   ]);
-  renderSettingsFacts('#updateInfoFacts', [['当前版本', info.version], ['更新方式', '按发布包手动更新并重启']]);
+  renderSettingsFacts('#updateInfoFacts', [['当前版本', info.version], ['仓库访问', '公开仓库，无需凭据']]);
   if (!isAdmin) return;
-  const storage = await api('/api/storage');
-  const settings = await api('/api/system-settings');
+  const [storage, settings, updateStatus] = await Promise.all([
+    api('/api/storage'), api('/api/system-settings'), api('/api/system-update-status'),
+  ]);
   $('#storageRetentionForm').elements.recordingRetentionDays.value = String(settings.settings.recordingRetentionDays || storage.recordingRetentionDays);
   $('#logRetentionForm').elements.logRetentionDays.value = String(settings.settings.logRetentionDays || storage.logRetentionDays);
   renderSettingsFacts('#storageInfoFacts', [
@@ -728,6 +731,12 @@ async function loadSystemSettingsPanels(isAdmin) {
     ['磁盘已用', storage.disk ? `${formatBytes(storage.disk.usedBytes)} / ${formatBytes(storage.disk.totalBytes)} (${Number(storage.disk.usagePercent).toFixed(1)}%)` : '读取失败'],
     ['录制文件', `${storage.recordings} 个`], ['录制目录占用', formatBytes(storage.files.recordings)], ['日志占用', formatBytes(storage.files.logs)],
   ]);
+  if (updateStatus.state && updateStatus.state !== 'idle') {
+    const status = $('#updateStatus');
+    status.textContent = `${updateStatus.message || '更新状态'}${updateStatus.updatedAt ? `（${localDateTime(updateStatus.updatedAt)}）` : ''}`;
+    status.classList.toggle('error', ['failed', 'rolled-back'].includes(updateStatus.state));
+    status.classList.toggle('warning', updateStatus.state === 'running');
+  }
 }
 
 async function loadSecuritySessions() {
@@ -6679,25 +6688,110 @@ $('#cleanupStorageBtn').addEventListener('click', () => {
 });
 $('#checkUpdateBtn').addEventListener('click', async () => {
   const status = $('#updateStatus');
-  status.textContent = '正在读取当前版本…';
+  const checkButton = $('#checkUpdateBtn');
+  const applyButton = $('#applyUpdateBtn');
+  checkedGithubUpdate = null;
+  applyButton.hidden = true;
+  applyButton.disabled = true;
+  checkButton.disabled = true;
+  status.textContent = '正在读取 GitHub main 版本…';
   status.classList.remove('error');
   try {
     const result = await api('/api/system-update-check');
     renderSettingsFacts('#updateInfoFacts', [
-      ['当前版本', result.currentVersion], ['最新正式版本', result.latestVersion],
-      ['发布日期', result.publishedAt ? localDateTime(result.publishedAt) : '—'], ['更新方式', '需按发布包手动更新并重启'],
+      ['当前版本', result.currentVersion],
+      ['本机提交', result.currentCommit ? result.currentCommit.slice(0, 12) : '无法识别'],
+      ['工作树', result.workingTreeClean ? '干净' : '有未提交改动'],
+      ['GitHub main', result.latestCommit.slice(0, 12)],
+      ['最新提交说明', result.latestMessage || '—'],
+      ['提交时间', result.committedAt ? localDateTime(result.committedAt) : '—'],
+      ['仓库访问', result.authenticationRequired ? '需要凭据' : '公开仓库，无需凭据'],
     ]);
-    if (result.updateAvailable === true && result.releaseUrl) {
-      status.textContent = `发现新版本 ${result.latestVersion}。`;
+    if (!result.supported) {
+      status.textContent = result.repositoryConfigured
+        ? '当前安装目录不是 main 分支 Git 工作树，暂不支持在线更新。'
+        : '当前 origin 不是受信任的 StreamHub GitHub 仓库，暂不支持在线更新。';
+      status.classList.add('error');
+    } else if (!result.workingTreeClean) {
+      status.textContent = '检测到服务器有未提交改动或未跟踪文件。为避免覆盖本机内容，在线更新已禁用；请先将工作树同步到干净的 Git 版本。';
+      status.classList.add('error');
+    } else if (result.updateAvailable === true) {
+      checkedGithubUpdate = result;
+      applyButton.textContent = `更新到 ${result.latestCommit.slice(0, 12)}`;
+      applyButton.hidden = false;
+      applyButton.disabled = false;
+      status.textContent = `发现 GitHub main 新提交：${result.latestMessage || result.latestCommit.slice(0, 12)}。`;
       const link = document.createElement('a');
-      link.href = result.releaseUrl;
+      link.href = result.commitUrl;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = '查看发布说明';
+      link.textContent = '查看提交';
       status.append(' ', link);
-    } else if (result.updateAvailable === false) status.textContent = '当前已是最新正式版本。';
-    else status.textContent = '已读取正式版本；当前版本格式无法自动比较，请人工核对。';
-  } catch (error) { status.textContent = error.message || '无法检查版本'; status.classList.add('error'); }
+    } else if (result.updateAvailable === false) {
+      status.textContent = '当前已是 GitHub main 最新版本。';
+    } else {
+      status.textContent = '已读取云端版本，但无法比较本机提交。';
+      status.classList.add('error');
+    }
+  } catch (error) {
+    status.textContent = error.message || '无法检查版本';
+    status.classList.add('error');
+  } finally {
+    checkButton.disabled = false;
+  }
+});
+$('#applyUpdateBtn').addEventListener('click', () => {
+  if (!checkedGithubUpdate || githubUpdatePending) return;
+  $('#applyUpdateCommit').textContent = `目标提交：${checkedGithubUpdate.latestCommit}`;
+  const status = $('#applyUpdateStatus');
+  status.hidden = true;
+  status.classList.remove('is-error');
+  status.textContent = '';
+  $('#confirmApplyUpdateBtn').disabled = false;
+  $('#confirmApplyUpdateBtn').textContent = '确认更新';
+  $('#cancelApplyUpdateBtn').disabled = false;
+  const dialog = $('#applyUpdateDialog');
+  if (!dialog.open) dialog.showModal();
+  $('#cancelApplyUpdateBtn').focus();
+});
+$('#cancelApplyUpdateBtn').addEventListener('click', () => {
+  if (!githubUpdatePending) $('#applyUpdateDialog').close();
+});
+$('#confirmApplyUpdateBtn').addEventListener('click', async () => {
+  if (!checkedGithubUpdate || githubUpdatePending) return;
+  githubUpdatePending = true;
+  const status = $('#applyUpdateStatus');
+  const confirmButton = $('#confirmApplyUpdateBtn');
+  const cancelButton = $('#cancelApplyUpdateBtn');
+  confirmButton.disabled = true;
+  cancelButton.disabled = true;
+  confirmButton.textContent = '正在启动更新…';
+  status.hidden = false;
+  status.classList.remove('is-error');
+  status.textContent = '正在检查运行任务并创建更新请求。';
+  try {
+    await api('/api/system-update', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, targetCommit: checkedGithubUpdate.latestCommit }),
+    });
+    $('#applyUpdateDialog').close();
+    const updateStatus = $('#updateStatus');
+    updateStatus.classList.remove('error');
+    updateStatus.classList.add('warning');
+    updateStatus.textContent = '更新已启动。代码安装完成并重启服务后，请刷新页面并重新登录。';
+    $('#applyUpdateBtn').disabled = true;
+    $('#checkUpdateBtn').disabled = true;
+  } catch (error) {
+    githubUpdatePending = false;
+    status.classList.add('is-error');
+    status.textContent = error.message || '无法启动更新';
+    confirmButton.disabled = false;
+    confirmButton.textContent = '重试';
+    cancelButton.disabled = false;
+  }
+});
+$('#applyUpdateDialog').addEventListener('cancel', event => {
+  if (githubUpdatePending) event.preventDefault();
 });
 $('#revokeOtherSessionsBtn').addEventListener('click', () => refreshSecuritySettings(
   '#sessionsStatus', '其他会话已退出', () => api('/api/auth/sessions', { method: 'DELETE' }),

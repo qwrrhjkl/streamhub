@@ -742,9 +742,12 @@
           </section>
 
           <section class="settings-panel" id="settingsPanelUpdates" role="tabpanel" aria-labelledby="settingsTabUpdates" hidden>
-            <section class="security-section"><header><h2>版本与更新</h2><p>检查发布版本；更新不会在后台自动重启服务。</p></header>
-              <dl class="settings-facts" id="updateInfoFacts"><div><dt>当前版本</dt><dd>—</dd></div></dl>
-              <button id="checkUpdateBtn" type="button">检查更新</button>
+            <section class="security-section"><header><h2>版本与更新</h2><p>检查 GitHub main 分支。更新会先备份并验证，然后重启 StreamHub 服务。</p></header>
+              <dl class="settings-facts" id="updateInfoFacts"><div><dt>当前版本</dt><dd>—</dd></div><div><dt>仓库访问</dt><dd>公开仓库，无需凭据</dd></div></dl>
+              <div class="update-actions">
+                <button id="checkUpdateBtn" type="button">检查更新</button>
+                <button class="primary" id="applyUpdateBtn" type="button" disabled hidden>更新到云端版本</button>
+              </div>
               <p class="field-status" id="updateStatus" role="status" aria-live="polite"></p>
             </section>
           </section>
@@ -985,6 +988,22 @@
       <div class="system-shutdown-actions">
         <button class="danger" id="confirmSystemShutdownButton" type="button">确认</button>
         <button id="cancelSystemShutdownButton" type="button">取消</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="system-shutdown-dialog dialog-system-v2" id="applyUpdateDialog" aria-labelledby="applyUpdateTitle" aria-describedby="applyUpdateDescription">
+    <div class="system-shutdown-shell">
+      <div class="system-shutdown-mark update-confirm-mark" aria-hidden="true"><i data-lucide="download"></i></div>
+      <div>
+        <h2 id="applyUpdateTitle">确认更新 StreamHub？</h2>
+        <p id="applyUpdateDescription">更新会从 GitHub main 拉取代码、备份当前版本并重启控制台服务。服务重启期间网页会短暂断开。</p>
+        <p class="update-confirm-commit" id="applyUpdateCommit"></p>
+      </div>
+      <p class="system-shutdown-status" id="applyUpdateStatus" role="status" aria-live="polite" hidden></p>
+      <div class="system-shutdown-actions">
+        <button class="primary" id="confirmApplyUpdateBtn" type="button">确认更新</button>
+        <button id="cancelApplyUpdateBtn" type="button">取消</button>
       </div>
     </div>
   </dialog>

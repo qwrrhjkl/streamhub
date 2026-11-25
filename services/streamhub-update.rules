@@ -1,0 +1,10 @@
+polkit.addRule(function (action, subject) {
+  if (
+    subject.user === 'streamhub'
+    && action.id === 'org.freedesktop.systemd1.manage-units'
+    && action.lookup('unit') === 'streamhub-update.service'
+    && action.lookup('verb') === 'start'
+  ) {
+    return polkit.Result.YES;
+  }
+});

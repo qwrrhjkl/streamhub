@@ -34,7 +34,16 @@ sudo bash scripts/60-verify.sh
 
 ## 从 GitHub 更新服务器
 
-服务器初次部署完成后，可以把 `/opt/StreamHub` 保持为这个仓库的 Git 工作树。后续源码更新只需在开发机提交并推送：
+StreamHub 的 GitHub 仓库目前是公开仓库，因此每台服务器无需配置仓库密码、PAT 或 SSH 密钥。要启用设置页里的“版本与更新”，安装时须将 `/opt/StreamHub` 部署为官方 `main` 分支的 Git 工作树（而不是只解压发布归档）：
+
+```bash
+sudo git clone --branch main --single-branch https://github.com/qwrrhjkl/streamhub.git /opt/StreamHub
+cd /opt/StreamHub
+```
+
+运行安装脚本后，管理员可在“设置 → 版本与更新”检查提交；确认后系统会备份当前 Git 版本、快进到检查过的提交、重启服务并做健康检查。只有官方 HTTPS 仓库、`main` 分支和无本地改动的工作树受支持；推流、预览、录制运行中不能更新。更新失败时会尝试回退，并在页面显示状态。
+
+若机器是从 tar.gz 发布包解压安装，它不包含 Git 元数据，设置页可以查看功能但不能在线更新。此类机器须在维护窗口手动按部署说明升级，或重新按 Git 克隆方式部署。普通源码更新可由开发机提交推送：
 
 ```bash
 git add .
@@ -42,7 +51,11 @@ git commit -m "Describe the change"
 git push origin main
 ```
 
-私有仓库服务器应配置只读 GitHub Deploy Key，并使用 SSH remote；密钥保存在服务器账户的 `.ssh` 目录，不要写入仓库、服务配置或 remote URL。服务器维护窗口更新并重启服务：
+系统仅自动安装 `app/`、`server/` 和一般文档的快进提交。涉及安装脚本、systemd 服务、配置、依赖、FFmpeg 或运行时的提交会被拦截，需人工维护窗口处理。服务器状态和回退备份分别保存在 `/opt/StreamHub/data/` 与 `/var/backups/streamhub/updater/`。
+
+该功能仅支持当前公开仓库；不要在 Web 页面粘贴 GitHub 凭据。如将来迁移到私有仓库，应使用服务器侧只读 Deploy Key 或其他受控凭据方案，并先设计密钥权限、轮换与审计，再启用私有仓库更新。
+
+如果无法使用设置页自动更新，维护人员可在服务器 SSH 会话中按既有的 Git 更新流程操作：
 
 ```bash
 cd /opt/StreamHub
@@ -53,7 +66,7 @@ sudo systemctl start streamhub.service streamhub-rtmp.service
 sudo bash scripts/60-verify.sh
 ```
 
-`/etc/streamhub/streamhub.env` 和 `/opt/StreamHub/data` 不在仓库中，`git pull` 不会覆盖它们。PAT 不要写入 Git remote。涉及 FFmpeg 构建脚本、NVIDIA/Blackmagic 驱动、系统包或 systemd 配置的更新，需要按变更说明重新执行对应安装步骤，而不是盲目重启。
+`/etc/streamhub/streamhub.env` 和 `/opt/StreamHub/data` 不在仓库中，Git 更新不会覆盖它们。涉及 FFmpeg 构建脚本、NVIDIA/Blackmagic 驱动、系统包或 systemd 配置的更新，需要按变更说明重新执行对应安装步骤，而不是盲目重启。
 
 更完整的发布与回退规则见 [docs/GIT-更新流程.md](docs/GIT-更新流程.md)。
 

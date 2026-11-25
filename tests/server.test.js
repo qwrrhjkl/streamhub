@@ -221,6 +221,65 @@ test('run report API lists immutable batches and downloads overall and destinati
   assert.equal(missing.status, 404);
 });
 
+test('GitHub update APIs are admin-only, require confirmation, and block active streaming work', async t => {
+  const auth = createAuthManager({
+    username: 'admin', password: 'heroesports', tokenFactory: () => 'update-admin-token',
+  });
+  const running = { sessions: new Map([['pipe-a', { status: 'running' }]]) };
+  const previews = { ...createPreviewManager(), sessions: new Map() };
+  const studio = { activeRecordings: new Map() };
+  const calls = [];
+  const githubUpdater = {
+    check: async () => ({
+      repository: 'qwrrhjkl/streamhub', branch: 'main', supported: true,
+      authenticationRequired: false, currentCommit: '1'.repeat(40), latestCommit: '2'.repeat(40),
+      updateAvailable: true,
+    }),
+    status: () => ({ state: 'idle' }),
+    start: async commit => { calls.push(commit); return { started: true, targetCommit: commit }; },
+  };
+  const server = createTestServer({
+    auth,
+    githubUpdater,
+    manager: { ...running, monitor: () => ({ outputs: [] }) },
+    previewManager: previews,
+    studio,
+  });
+  await listen(server);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  assert.equal((await fetch(`${baseUrl}/api/system-update-check`)).status, 401);
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'heroesports' }),
+  });
+  const cookie = login.headers.get('set-cookie').split(';', 1)[0];
+  const check = await fetch(`${baseUrl}/api/system-update-check`, { headers: { cookie } });
+  assert.equal((await check.json()).authenticationRequired, false);
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/system-update-status`, { headers: { cookie } })).json(), { state: 'idle' });
+
+  const missingConfirmation = await fetch(`${baseUrl}/api/system-update`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ targetCommit: '2'.repeat(40) }),
+  });
+  assert.equal(missingConfirmation.status, 400);
+
+  const activeWork = await fetch(`${baseUrl}/api/system-update`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ confirm: true, targetCommit: '2'.repeat(40) }),
+  });
+  assert.equal(activeWork.status, 409);
+  running.sessions.clear();
+
+  const started = await fetch(`${baseUrl}/api/system-update`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ confirm: true, targetCommit: '2'.repeat(40) }),
+  });
+  assert.equal(started.status, 202);
+  assert.deepEqual(calls, ['2'.repeat(40)]);
+});
+
 test('authentication routes issue and invalidate a protected management session', async t => {
   const auth = createAuthManager({
     username: 'admin',

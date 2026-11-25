@@ -2,7 +2,6 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
-const https = require('node:https');
 const net = require('node:net');
 const { promisify } = require('node:util');
 const { URL } = require('node:url');
@@ -19,6 +18,7 @@ const { StudioManager } = require('./lib/studioManager');
 const { createLogManager } = require('./lib/logManager');
 const { createPipelineReport, listPipelineRunReports } = require('./lib/pipelineReport');
 const { detectEncoderCapabilities } = require('./lib/encoderCapabilities');
+const { createGithubUpdater } = require('./lib/githubUpdater');
 const {
   SESSION_TTL_MS,
   createAuthManager,
@@ -100,43 +100,6 @@ function cleanupOldRecordings(mediaAssets, manager, retentionDays, now = Date.no
     } catch {}
   }
   return { removed, count: removed.length };
-}
-
-function latestPublishedRelease() {
-  return new Promise((resolve, reject) => {
-    const request = https.get('https://api.github.com/repos/qwrrhjkl/streamhub/releases/latest', {
-      headers: { 'user-agent': 'StreamHub-version-check', accept: 'application/vnd.github+json' },
-      timeout: 6000,
-    }, response => {
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', chunk => { body += chunk; });
-      response.on('end', () => {
-        if (response.statusCode !== 200) return reject(new Error(`发布服务返回 HTTP ${response.statusCode}`));
-        try {
-          const release = JSON.parse(body);
-          if (!release.tag_name || release.draft || release.prerelease) throw new Error('没有可用的正式发布版本');
-          resolve({ version: String(release.tag_name), url: String(release.html_url || ''), publishedAt: String(release.published_at || '') });
-        } catch (error) { reject(error); }
-      });
-    });
-    request.on('timeout', () => request.destroy(new Error('检查发布版本超时')));
-    request.on('error', reject);
-  });
-}
-
-function compareReleaseVersions(current, latest) {
-  const parse = value => {
-    const match = String(value).match(/(\d+)\.(\d+)\.(\d+)/);
-    return match ? match.slice(1).map(Number) : null;
-  };
-  const left = parse(current);
-  const right = parse(latest);
-  if (!left || !right) return null;
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return right[index] > left[index];
-  }
-  return false;
 }
 
 function localPortListening(port) {
@@ -320,7 +283,7 @@ async function handleRtmpNotify(req, res, url, store) {
 
 async function handleApi(req, res, url, {
   rootDir, store, manager, previewManager, mediaAssets, studio, systemStatus, auth, logManager, port,
-  shutdownState, startShutdown,
+  shutdownState, startShutdown, githubUpdater,
 }) {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   const parts = url.pathname.split('/').filter(Boolean).slice(1);
@@ -484,16 +447,35 @@ async function handleApi(req, res, url, {
   if (url.pathname === '/api/system-update-check' && req.method === 'GET') {
     requireAdmin();
     try {
-      const release = await latestPublishedRelease();
+      const update = await githubUpdater.check();
       return json(res, 200, {
         currentVersion: VERSION,
-        latestVersion: release.version,
-        updateAvailable: compareReleaseVersions(VERSION, release.version),
-        releaseUrl: release.url,
-        publishedAt: release.publishedAt,
+        ...update,
       });
     } catch (error) {
       return json(res, 503, { error: error.message || '无法连接发布服务' });
+    }
+  }
+  if (url.pathname === '/api/system-update-status' && req.method === 'GET') {
+    requireAdmin();
+    return json(res, 200, githubUpdater.status());
+  }
+  if (url.pathname === '/api/system-update' && req.method === 'POST') {
+    requireAdmin();
+    const body = await readBody(req);
+    if (body.confirm !== true) return json(res, 400, { error: '请先确认更新和服务重启' });
+    const activeWork = [
+      manager && manager.sessions,
+      previewManager && previewManager.sessions,
+      studio && studio.activeRecordings,
+    ].some(collection => collection && Number(collection.size) > 0);
+    if (activeWork) {
+      return json(res, 409, { error: '检测到推流、预览或录制仍在运行，请停止所有任务后重试' });
+    }
+    try {
+      return json(res, 202, await githubUpdater.start(body.targetCommit));
+    } catch (error) {
+      return json(res, error.statusCode || 503, { error: error.message || '无法启动更新' });
     }
   }
   if (url.pathname === '/api/storage' && req.method === 'GET') {
@@ -869,6 +851,7 @@ function createServer(options = {}) {
       ...(typeof previewManager.getActiveLogFiles === 'function' ? previewManager.getActiveLogFiles() : []),
     ],
   });
+  const githubUpdater = options.githubUpdater || createGithubUpdater({ rootDir });
   if (typeof logManager.start === 'function') logManager.start();
 
   const server = http.createServer(async (req, res) => {
@@ -876,7 +859,7 @@ function createServer(options = {}) {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url, {
         rootDir, store, manager, previewManager, mediaAssets, studio, systemStatus, auth, logManager, port,
-        shutdownState, startShutdown,
+        shutdownState, startShutdown, githubUpdater,
       });
       return serveStatic(req, res, appDir);
     } catch (error) {

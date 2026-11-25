@@ -33,6 +33,7 @@ install -d -o streamhub -g streamhub -m 0750 \
 chown -R streamhub:streamhub "${STREAMHUB_PREFIX}/data"
 
 install -d -m 0750 /etc/streamhub
+install -d -o root -g root -m 0750 /var/backups/streamhub/updater
 if [[ ! -f /etc/streamhub/streamhub.env ]]; then
   install -o root -g streamhub -m 0640 \
     "${STREAMHUB_PREFIX}/config/streamhub.env.example" /etc/streamhub/streamhub.env
@@ -48,8 +49,10 @@ fi
 install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub.service" /etc/systemd/system/streamhub.service
 install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-rtmp.service" /etc/systemd/system/streamhub-rtmp.service
 install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-poweroff.service" /etc/systemd/system/streamhub-poweroff.service
+install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-update.service" /etc/systemd/system/streamhub-update.service
 install -d -o root -g root -m 0755 /etc/polkit-1/rules.d
 install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-poweroff.rules" /etc/polkit-1/rules.d/50-streamhub-poweroff.rules
+install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-update.rules" /etc/polkit-1/rules.d/51-streamhub-update.rules
 install -o root -g root -m 0644 "${STREAMHUB_PREFIX}/services/streamhub-logrotate" /etc/logrotate.d/streamhub
 install -d -o streamhub -g streamhub -m 0750 /run/streamhub-rtmp
 runuser -u streamhub -- nginx -t -c "${STREAMHUB_PREFIX}/services/nginx-rtmp.conf" -p "${STREAMHUB_PREFIX}"

@@ -13,9 +13,18 @@
 
 需要 DeckLink 时，请按随附的《DeckLink驱动放置说明.md》下载并放置驱动与 SDK。该文件也可单独提供给负责新机安装的人员。
 
-## 上传和校验
+## 选择部署方式
 
-把 `StreamHub-ubuntu24.04-amd64-20261106.tar.gz` 与同名 `.sha256` 文件上传到新机器，然后执行：
+如果需要以后从设置页自动更新，推荐联网机器直接克隆官方仓库，并在此目录运行安装脚本：
+
+```bash
+sudo git clone --branch main --single-branch https://github.com/qwrrhjkl/streamhub.git /opt/StreamHub
+cd /opt/StreamHub
+```
+
+官方仓库目前公开，无需每台机器配置访问凭据。请不要在 Web 页面输入 GitHub PAT 或密码；更新使用服务端受限的系统服务，并只接受干净的官方 HTTPS `main` 工作树。
+
+如需离线或固定版本部署，可使用发布归档；它不包含 `.git` 元数据，因此设置页自动更新不可用。把 `StreamHub-ubuntu24.04-amd64-20261106.tar.gz` 与同名 `.sha256` 文件上传到新机器，然后执行：
 
 ```bash
 cd /tmp
