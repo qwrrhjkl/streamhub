@@ -61,14 +61,11 @@
       </div>
     </div>
     <nav class="nav" id="nav" aria-label="主导航">
-      <span class="nav-section-label">控制中心</span>
       <button data-view="dashboard" class="active"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>总览</span></button>
       <button data-view="distribution"><i data-lucide="radio-tower" aria-hidden="true"></i><span>推流分发</span></button>
-      <span class="nav-section-label">信号编排</span>
       <button data-view="rooms"><i data-lucide="radio-receiver" aria-hidden="true"></i><span>本地直播间</span></button>
       <button data-view="scenes"><i data-lucide="layers-3" aria-hidden="true"></i><span>场景编排</span></button>
       <button data-view="destinations"><i data-lucide="send" aria-hidden="true"></i><span>推流目标</span></button>
-      <span class="nav-section-label">运行维护</span>
       <button data-view="monitor"><i data-lucide="activity" aria-hidden="true"></i><span>输出监测</span></button>
       <button data-view="devices"><i data-lucide="cpu" aria-hidden="true"></i><span>采集设备</span></button>
       <button data-view="logs"><i data-lucide="file-clock" aria-hidden="true"></i><span>日志</span></button>
@@ -140,7 +137,7 @@
           <div id="dashboardPipelineCards" class="dashboard-pipeline-list"></div>
         </section>
         <section class="panel dashboard-network-panel" aria-labelledby="dashboardNetworkTitle">
-          <header class="dashboard-section-head"><div><h2 id="dashboardNetworkTitle">实时流量监控</h2><p>服务器网卡实际接收与发送速率 · 最近 5 分钟</p></div><span class="live-indicator"><i></i>每秒刷新</span></header>
+          <header class="dashboard-section-head"><div><h2 id="dashboardNetworkTitle">实时流量监控</h2><p>服务器网卡实际接收与发送速率 · 最近 10 分钟</p></div><span class="live-indicator"><i></i>每秒刷新</span></header>
           <div class="dashboard-network-layout">
             <div class="dashboard-network-chart-wrap"><canvas id="dashboardNetworkChart" width="960" height="250" aria-label="服务器网卡上传和下载流量趋势"></canvas></div>
             <aside class="dashboard-network-stats">

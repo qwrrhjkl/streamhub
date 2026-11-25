@@ -203,6 +203,77 @@ function initializeSidebar() {
   desktopQuery.addEventListener('change', () => applySidebarCollapsed(sidebarCollapsedPreference));
 }
 
+function initializeNavDragSort() {
+  const nav = $('#nav');
+  if (!nav) return;
+  const navButtons = () => Array.from(nav.querySelectorAll('button[data-view]'));
+  const NAV_ORDER_KEY = 'streamhub.navOrder';
+  let dragging = null;
+
+  function persistOrder() {
+    try { localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(navButtons().map(button => button.dataset.view))); } catch { /* ignore */ }
+  }
+
+  function restoreOrder() {
+    try {
+      const raw = localStorage.getItem(NAV_ORDER_KEY);
+      if (!raw) return;
+      const order = JSON.parse(raw);
+      const current = navButtons();
+      if (!Array.isArray(order) || order.length !== current.length) return;
+      const byView = new Map(current.map(button => [button.dataset.view, button]));
+      const seen = new Set();
+      for (const view of order) {
+        const button = byView.get(view);
+        if (!button || seen.has(view)) continue;
+        seen.add(view);
+        nav.appendChild(button);
+      }
+    } catch { /* ignore malformed order */ }
+  }
+
+  for (const button of navButtons()) {
+    const handle = document.createElement('span');
+    handle.className = 'nav-drag-handle';
+    handle.draggable = true;
+    handle.title = '拖动排序';
+    handle.setAttribute('aria-label', '拖动排序');
+    handle.innerHTML = '<i data-lucide="grip-vertical" aria-hidden="true"></i>';
+    button.appendChild(handle);
+
+    handle.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    handle.addEventListener('dragstart', event => {
+      dragging = button;
+      button.classList.add('nav-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        try { event.dataTransfer.setData('text/plain', button.dataset.view || ''); } catch { /* ignore */ }
+      }
+    });
+    handle.addEventListener('dragend', () => {
+      button.classList.remove('nav-dragging');
+      dragging = null;
+      persistOrder();
+    });
+  }
+
+  nav.addEventListener('dragover', event => {
+    if (!dragging) return;
+    const target = event.target && event.target.closest ? event.target.closest('button[data-view]') : null;
+    if (!target || target === dragging) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const rect = target.getBoundingClientRect();
+    const before = (event.clientY - rect.top) < (rect.height / 2);
+    nav.insertBefore(dragging, before ? target : target.nextSibling);
+  });
+
+  restoreOrder();
+}
+
 let activeParameterHelpButton = null;
 
 function parameterHelpIsOpen() {
@@ -394,7 +465,7 @@ function bitrateWarningThresholdPercent() {
 }
 const MAX_OVERLAY_IMAGES = 20;
 const SYSTEM_HISTORY_LIMIT = 30;
-const DASHBOARD_NETWORK_WINDOW_MS = 5 * 60_000;
+const DASHBOARD_NETWORK_WINDOW_MS = 10 * 60_000;
 let monitorRangeSec = 900;
 let monitorPollPending = false;
 let monitorHistoryRequestId = 0;
@@ -422,6 +493,8 @@ let systemStatusState = {
   resourceSignature: '',
 };
 let dashboardNetworkHistory = [];
+let dashboardNetworkHistoryLoading = false;
+let dashboardNetworkHistorySeeded = false;
 let monitorDetailState = {
   outputId: '',
   mode: 'rolling',
@@ -540,9 +613,6 @@ async function enterConsole(username, role = 'admin') {
   $('#currentUsername').textContent = authState.username;
   $('#userMenu').hidden = true;
   $('#userMenuButton').setAttribute('aria-expanded', 'false');
-  $('#authLoadingView').hidden = true;
-  $('#loginView').hidden = true;
-  $('#consoleApp').hidden = false;
   if ($('#consoleApp').dataset) $('#consoleApp').dataset.role = authState.role;
   if ($('#shutdownMenuButton')) $('#shutdownMenuButton').hidden = authState.role !== 'admin';
   if ($('#roleReadonlyNote')) $('#roleReadonlyNote').hidden = authState.role !== 'viewer';
@@ -554,6 +624,11 @@ async function enterConsole(username, role = 'admin') {
     throw error;
   }
   startPolling();
+  const targetView = (typeof viewFromHash === 'function' ? viewFromHash() : null) || 'dashboard';
+  if (typeof show === 'function') show(targetView);
+  $('#authLoadingView').hidden = true;
+  $('#loginView').hidden = true;
+  $('#consoleApp').hidden = false;
 }
 
 function leaveConsole() {
@@ -1017,11 +1092,21 @@ function runningStudioPipelines(pipelines = [], monitor = {}) {
   ));
 }
 
+function viewFromHash() {
+  const hash = typeof window !== 'undefined' ? window.location.hash : '';
+  if (hash && hash.startsWith('#/')) {
+    const view = hash.slice(2);
+    if (VIEW_META[view]) return view;
+  }
+  return null;
+}
+
 function show(view) {
   if (view === 'system') view = 'dashboard';
+  if (!VIEW_META[view]) view = 'dashboard';
   $$('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   $$('#nav button').forEach(el => el.classList.toggle('active', el.dataset.view === view));
-  const meta = VIEW_META[view] || VIEW_META.dashboard;
+  const meta = VIEW_META[view];
   if ($('#topbarPageTitle')) $('#topbarPageTitle').textContent = meta.title;
   if ($('#topbarPageKicker')) $('#topbarPageKicker').textContent = meta.kicker;
   if ($('#consoleApp')) $('#consoleApp').dataset.currentView = view;
@@ -1029,6 +1114,14 @@ function show(view) {
   else requestAnimationFrame(syncPipelineCardMonitors);
   if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }
+  const desiredHash = `#/${view}`;
+  if (window.location.hash !== desiredHash) {
+    try {
+      window.location.hash = desiredHash;
+    } catch {
+      // Hash update is best-effort; never break view switching because of it.
+    }
   }
   if (view === 'devices') loadDevices();
   if (view === 'logs') loadLogs();
@@ -1568,17 +1661,140 @@ function roomPublishInfo(room) {
   };
 }
 
-async function copyText(text) {
+function execCopyFallback(text) {
   try {
-    await navigator.clipboard.writeText(text);
-    showToast('已复制');
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '0';
+    area.style.left = '0';
+    area.style.width = '1px';
+    area.style.height = '1px';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    area.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(area);
+    return ok;
   } catch {
-    window.prompt('复制下面的内容', text);
+    return false;
   }
 }
 
-function confirmDangerousAction(message) {
-  return window.confirm(message);
+function writeClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => execCopyFallback(text));
+  }
+  return Promise.resolve(execCopyFallback(text));
+}
+
+async function copyText(text) {
+  const ok = await writeClipboard(text);
+  if (ok) showToast('已复制');
+  else await uiCopy(text);
+}
+
+// ---- 应用内弹窗（替代浏览器原生 alert / confirm / prompt）----
+let uiDialogEl = null;
+function ensureUiDialog() {
+  if (uiDialogEl) return uiDialogEl;
+  uiDialogEl = document.createElement('dialog');
+  uiDialogEl.className = 'dialog-system-v2 ui-app-dialog';
+  uiDialogEl.innerHTML = `
+    <div class="ui-app-dialog-shell">
+      <header class="ui-app-dialog-head">
+        <div><h2 class="ui-app-dialog-title"></h2><p class="ui-app-dialog-message" hidden></p></div>
+        <button class="icon-button ui-app-dialog-close" type="button" aria-label="关闭" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+      </header>
+      <label class="ui-app-dialog-copy" hidden><span>完整地址</span><input class="ui-app-dialog-input" readonly></label>
+      <div class="ui-app-dialog-actions">
+        <button class="ui-app-dialog-cancel" type="button">取消</button>
+        <button class="primary ui-app-dialog-confirm" type="button">确定</button>
+      </div>
+    </div>`;
+  (document.getElementById('consoleApp') || document.body).appendChild(uiDialogEl);
+  return uiDialogEl;
+}
+
+function uiDialogOpen({ title, message, mode, value, danger }) {
+  return new Promise(resolve => {
+    const dialog = ensureUiDialog();
+    const titleEl = dialog.querySelector('.ui-app-dialog-title');
+    const messageEl = dialog.querySelector('.ui-app-dialog-message');
+    const copyWrap = dialog.querySelector('.ui-app-dialog-copy');
+    const inputEl = dialog.querySelector('.ui-app-dialog-input');
+    const cancelBtn = dialog.querySelector('.ui-app-dialog-cancel');
+    const closeBtn = dialog.querySelector('.ui-app-dialog-close');
+    const confirmBtn = dialog.querySelector('.ui-app-dialog-confirm');
+    titleEl.textContent = title;
+    messageEl.textContent = message || '';
+    messageEl.hidden = !message;
+    copyWrap.hidden = mode !== 'copy';
+    inputEl.value = mode === 'copy' ? (value || '') : '';
+    cancelBtn.hidden = mode === 'alert';
+    confirmBtn.textContent = mode === 'copy' ? '复制' : '确定';
+    confirmBtn.className = danger ? 'danger ui-app-dialog-confirm' : 'primary ui-app-dialog-confirm';
+    let settled = false;
+    const settle = result => {
+      if (settled) return;
+      settled = true;
+      confirmBtn.removeEventListener('click', confirmHandler);
+      cancelBtn.removeEventListener('click', cancelHandler);
+      closeBtn.removeEventListener('click', cancelHandler);
+      dialog.removeEventListener('close', closeHandler);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    function confirmHandler() {
+      if (mode === 'copy') {
+        inputEl.focus();
+        inputEl.select();
+        try {
+          if (document.execCommand('copy')) {
+            showToast('已复制');
+            settle(true);
+          } else {
+            inputEl.select();
+            showToast('复制失败，请按 Ctrl+C 手动复制');
+          }
+        } catch {
+          inputEl.select();
+          showToast('复制失败，请按 Ctrl+C 手动复制');
+        }
+        return;
+      }
+      settle(true);
+    }
+    function cancelHandler() { settle(false); }
+    function closeHandler() { settle(mode === 'confirm' ? false : true); }
+    confirmBtn.addEventListener('click', confirmHandler);
+    cancelBtn.addEventListener('click', cancelHandler);
+    closeBtn.addEventListener('click', cancelHandler);
+    dialog.addEventListener('close', closeHandler);
+    if (!dialog.open) dialog.showModal();
+    refreshIcons();
+    if (mode === 'copy') { inputEl.focus(); inputEl.select(); }
+    else confirmBtn.focus();
+  });
+}
+
+function uiAlert(message, title) {
+  return uiDialogOpen({ title: title || '提示', message, mode: 'alert' });
+}
+
+function uiConfirm(message, title, danger) {
+  return uiDialogOpen({ title: title || '确认操作', message, mode: 'confirm', danger: Boolean(danger) });
+}
+
+function uiCopy(value, title) {
+  return uiDialogOpen({ title: title || '复制推流地址', message: '', mode: 'copy', value });
+}
+
+async function confirmDangerousAction(message) {
+  return await uiConfirm(message, '确认操作', true);
 }
 
 function advancePipelineFormGeneration() {
@@ -2165,12 +2381,12 @@ async function uploadOverlayFiles({ kind, inputId, statusId, buttonId }) {
   const uploadGeneration = pipelineFormGeneration;
   const uploadEditingPipelineId = editingPipelineId;
   const current = overlayItems(kind);
-  if (!files.length) return alert('请先选择至少一张本地图片');
-  if (current.length + files.length > MAX_OVERLAY_IMAGES) return alert(`每组最多添加 ${MAX_OVERLAY_IMAGES} 张图片`);
+  if (!files.length) return uiAlert('请先选择至少一张本地图片');
+  if (current.length + files.length > MAX_OVERLAY_IMAGES) return uiAlert(`每组最多添加 ${MAX_OVERLAY_IMAGES} 张图片`);
   if (files.some(file => !['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) {
-    return alert('图片仅支持 PNG、JPEG 或 WebP');
+    return uiAlert('图片仅支持 PNG、JPEG 或 WebP');
   }
-  if (files.some(file => file.size > 10 * 1024 * 1024)) return alert('每张图片不能超过 10 MiB');
+  if (files.some(file => file.size > 10 * 1024 * 1024)) return uiAlert('每张图片不能超过 10 MiB');
 
   button.disabled = true;
   status.classList.remove('error');
@@ -2208,9 +2424,9 @@ async function uploadNoSignalImage() {
   const file = fileInput && fileInput.files && fileInput.files[0];
   const uploadGeneration = pipelineFormGeneration;
   const uploadEditingPipelineId = editingPipelineId;
-  if (!file) return alert('请先选择一张本地图片');
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return alert('图片仅支持 PNG、JPEG 或 WebP');
-  if (file.size > 10 * 1024 * 1024) return alert('图片不能超过 10 MiB');
+  if (!file) return uiAlert('请先选择一张本地图片');
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return uiAlert('图片仅支持 PNG、JPEG 或 WebP');
+  if (file.size > 10 * 1024 * 1024) return uiAlert('图片不能超过 10 MiB');
   button.disabled = true;
   status.classList.remove('error');
   status.textContent = '正在上传无信号推送画面...';
@@ -2760,10 +2976,10 @@ function scenePayloadFromEditor() {
 async function saveScene() {
   if (studioActionPending) return;
   const payload = scenePayloadFromEditor();
-  if (!payload.name) return alert('请输入场景名称');
-  if (payload.sourceType === 'playlist' && !payload.playlist.length) return alert('请至少添加一个视频素材');
+  if (!payload.name) return uiAlert('请输入场景名称');
+  if (payload.sourceType === 'playlist' && !payload.playlist.length) return uiAlert('请至少添加一个视频素材');
   if (payload.sourceType === 'stream' && !/^(?:rtmps?|srt|https?):\/\//i.test(payload.stream.url)) {
-    return alert('请输入有效的 RTMP、RTMPS、SRT、HTTP 或 HTTPS 流地址');
+    return uiAlert('请输入有效的 RTMP、RTMPS、SRT、HTTP 或 HTTPS 流地址');
   }
   studioActionPending = true;
   renderSceneWorkspace();
@@ -2787,7 +3003,7 @@ async function saveScene() {
 
 async function deleteScene(id) {
   const scene = findScene(id);
-  if (!scene || !confirm(`确认删除场景“${scene.name}”？`)) return;
+  if (!scene || !await uiConfirm(`确认删除场景“${scene.name}”？`)) return;
   await api(`/api/scenes/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (selectedSceneId === id) {
     selectedSceneId = '';
@@ -2810,7 +3026,7 @@ function openMediaPicker() {
 
 function confirmMediaSelection() {
   const selected = $$('#mediaPickerList input[type="checkbox"]:checked').map(input => input.value);
-  if (!selected.length) return alert('请至少选择一个视频');
+  if (!selected.length) return uiAlert('请至少选择一个视频');
   for (const mediaId of selected) sceneDraft.playlist = appendSceneMedia(sceneDraft.playlist, mediaId);
   $('#mediaPickerDialog').close();
   renderScenePlaylist();
@@ -2879,7 +3095,7 @@ async function uploadMediaFiles() {
   if (studioActionPending) return;
   const input = $('#mediaUploadInput');
   const files = Array.from(input.files || []);
-  if (!files.length) return alert('请先选择视频文件');
+  if (!files.length) return uiAlert('请先选择视频文件');
   studioActionPending = true;
   mediaUploadCancelRequested = false;
   $('#uploadMediaBtn').disabled = true;
@@ -2928,23 +3144,23 @@ function cancelMediaUpload() {
 
 async function deleteMediaAsset(id) {
   const asset = findMediaAsset(id);
-  if (!asset || !confirm(`确认删除视频素材“${asset.name}”？`)) return;
+  if (!asset || !await uiConfirm(`确认删除视频素材“${asset.name}”？`)) return;
   try {
     await api(`/api/media-assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (selectedMediaPreviewId === id) selectedMediaPreviewId = '';
     await loadState();
     showToast('视频素材已删除');
   } catch (error) {
-    alert(error.message);
+    uiAlert(error.message);
   }
 }
 
 async function uploadSceneWatermarks() {
   const files = Array.from($('#sceneWatermarkFile').files || []);
-  if (!files.length) return alert('请先选择水印图片');
-  if (sceneDraft.watermarks.length + files.length > MAX_OVERLAY_IMAGES) return alert(`场景最多添加 ${MAX_OVERLAY_IMAGES} 张水印`);
-  if (files.some(file => !['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return alert('水印仅支持 PNG、JPEG 或 WebP');
-  if (files.some(file => file.size > 10 * 1024 * 1024)) return alert('每张水印不能超过 10 MiB');
+  if (!files.length) return uiAlert('请先选择水印图片');
+  if (sceneDraft.watermarks.length + files.length > MAX_OVERLAY_IMAGES) return uiAlert(`场景最多添加 ${MAX_OVERLAY_IMAGES} 张水印`);
+  if (files.some(file => !['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return uiAlert('水印仅支持 PNG、JPEG 或 WebP');
+  if (files.some(file => file.size > 10 * 1024 * 1024)) return uiAlert('每张水印不能超过 10 MiB');
   $('#uploadSceneWatermarkBtn').disabled = true;
   try {
     for (const file of files) {
@@ -2970,8 +3186,8 @@ async function startStudioRecording(form) {
   const fd = new FormData(form);
   const pipelineId = String(fd.get('pipelineId') || '');
   const name = String(fd.get('name') || '').trim();
-  if (!pipelineId) return alert('请选择运行中的共享转推任务');
-  if (!name) return alert('请输入录制名称');
+  if (!pipelineId) return uiAlert('请选择运行中的共享转推任务');
+  if (!name) return uiAlert('请输入录制名称');
   studioActionPending = true;
   renderRecordingWorkspace();
   try {
@@ -2990,7 +3206,7 @@ async function startStudioRecording(form) {
 
 async function stopStudioRecording(id, replay) {
   const message = replay ? '确认停止录制并立即从头重播？' : '确认停止录制并保存为视频素材？';
-  if (studioActionPending || !confirm(message)) return;
+  if (studioActionPending || !await uiConfirm(message)) return;
   studioActionPending = true;
   renderRecordingWorkspace();
   try {
@@ -3000,7 +3216,7 @@ async function stopStudioRecording(id, replay) {
     await loadState();
     showToast(replay ? '录制已完成并从 00:00:00 开始重播' : '录制已保存到视频素材');
   } catch (error) {
-    alert(error.message);
+    uiAlert(error.message);
   } finally {
     studioActionPending = false;
     renderRecordingWorkspace();
@@ -3008,7 +3224,7 @@ async function stopStudioRecording(id, replay) {
 }
 
 async function deleteStudioRecording(id) {
-  if (studioActionPending || !confirm('确认删除这条录制任务记录？已生成的视频素材会保留。')) return;
+  if (studioActionPending || !await uiConfirm('确认删除这条录制任务记录？已生成的视频素材会保留。')) return;
   studioActionPending = true;
   renderRecordingWorkspace();
   try {
@@ -3016,7 +3232,7 @@ async function deleteStudioRecording(id) {
     await loadState();
     showToast('录制任务记录已删除');
   } catch (error) {
-    alert(error.message);
+    uiAlert(error.message);
   } finally {
     studioActionPending = false;
     renderRecordingWorkspace();
@@ -3254,7 +3470,7 @@ async function showPreviousProgramInPreview(program, pipeline) {
 async function openStudioSwitcher(pipelineId) {
   const pipeline = (state.pipelines || []).find(item => item.id === pipelineId);
   const available = runningStudioPipelines(state.pipelines || [], state.monitor || {}).some(item => item.id === pipelineId);
-  if (!pipeline || !available) return alert('切换台只支持正在运行的共享转推任务');
+  if (!pipeline || !available) return uiAlert('切换台只支持正在运行的共享转推任务');
   await releaseStudioSwitcher();
   await releasePipelineCardMonitor(pipelineId);
   studioSwitcherState.pipelineId = pipelineId;
@@ -3531,10 +3747,30 @@ function drawDashboardNetworkChart(canvas, history) {
     ctx.fillText(formatAxisTime(time), x, top + height + 9);
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = themeColor('--ui-chart-label', '#687982'); ctx.fillText('下载', left, 13); ctx.fillStyle = '#1b9b72'; ctx.fillRect(left + 34, 8, 18, 3); ctx.fillStyle = themeColor('--ui-chart-label', '#687982'); ctx.fillText('上传', left + 68, 13); ctx.fillStyle = '#2388ff'; ctx.fillRect(left + 102, 8, 18, 3);
-  if (!pointsInWindow.length) { ctx.fillStyle = themeColor('--ui-chart-label', '#687982'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('正在收集最近 5 分钟流量数据', left + width / 2, top + height / 2); }
+  if (!pointsInWindow.length) { ctx.fillStyle = themeColor('--ui-chart-label', '#687982'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('正在收集最近 10 分钟流量数据', left + width / 2, top + height / 2); }
+}
+
+async function seedDashboardNetworkHistory() {
+  if (dashboardNetworkHistorySeeded || dashboardNetworkHistoryLoading) return;
+  dashboardNetworkHistoryLoading = true;
+  try {
+    const data = await api('/api/system-network-history');
+    const points = Array.isArray(data && data.points) ? data.points : [];
+    const now = Date.now();
+    dashboardNetworkHistory = points
+      .map(point => ({ time: Number(point.time), receive: Number(point.receive), send: Number(point.send) }))
+      .filter(point => Number.isFinite(point.time) && Number.isFinite(point.receive) && Number.isFinite(point.send))
+      .filter(point => point.time >= now - DASHBOARD_NETWORK_WINDOW_MS);
+    dashboardNetworkHistorySeeded = true;
+  } catch {
+    // Transient failure; the next polling tick will retry.
+  } finally {
+    dashboardNetworkHistoryLoading = false;
+  }
 }
 
 function renderDashboardNetwork(snapshot = {}) {
+  seedDashboardNetworkHistory();
   const interfaces = Array.isArray(snapshot.network && snapshot.network.interfaces) ? snapshot.network.interfaces : [];
   const device = interfaces.find(item => item.name === 'enp86s0') || interfaces[0];
   const now = Date.parse(snapshot.sampledAt) || Date.now();
@@ -3730,11 +3966,11 @@ function bindRendererActions(container) {
 function addSelectedDestination() {
   const picker = $('#destinationPicker');
   const id = picker && picker.value;
-  if (!id) return alert('请先从下拉菜单选择一个输出目标');
+  if (!id) return uiAlert('请先从下拉菜单选择一个输出目标');
   const destination = findDestination(id);
-  if (!destination) return alert('未找到这个输出目标，请刷新后重试');
-  if (destination.enabled === false) return alert('这个输出目标已停用，请先启用后再添加');
-  if (selectedDestinationIds.includes(id)) return alert('这个输出目标已经添加过了');
+  if (!destination) return uiAlert('未找到这个输出目标，请刷新后重试');
+  if (destination.enabled === false) return uiAlert('这个输出目标已停用，请先启用后再添加');
+  if (selectedDestinationIds.includes(id)) return uiAlert('这个输出目标已经添加过了');
   setSelectedDestinationIds([...selectedDestinationIds, id]);
 }
 
@@ -4586,7 +4822,7 @@ async function loadMonitorHistory() {
 
 function reportMonitorHistoryError(error) {
   if (error && error.name === 'AbortError') return;
-  alert(error.message);
+  uiAlert(error.message);
 }
 
 function applyMonitorRange() {
@@ -4822,7 +5058,7 @@ function closeMonitorDetail() {
 
 async function resetMonitorDrops() {
   if (!monitorDetailState.outputId || monitorDetailState.loading) return;
-  if (!confirmDangerousAction('确认重置这一路输出的网络丢帧展示统计，并从当前时刻重新计算？原始监控历史不会删除。')) return;
+  if (!await confirmDangerousAction('确认重置这一路输出的网络丢帧展示统计，并从当前时刻重新计算？原始监控历史不会删除。')) return;
   const button = $('#resetMonitorDropsBtn');
   button.disabled = true;
   setMonitorDetailError('');
@@ -5330,7 +5566,7 @@ async function releaseOverlayLayoutPreview() {
 
 async function openOverlayLayoutEditor(kind) {
   const items = overlayLayoutItems(kind);
-  if (!items.length) return alert(kind === 'watermark' ? '请先添加水印图片' : '请先添加幻灯片图片');
+  if (!items.length) return uiAlert(kind === 'watermark' ? '请先添加水印图片' : '请先添加幻灯片图片');
   const dialog = $('#overlayLayoutDialog');
   overlayLayoutState.kind = kind;
   overlayLayoutState.selectedIndex = 0;
@@ -5822,7 +6058,7 @@ function pipelineEncodingValidationError(pipeline) {
 
 async function startPipeline(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
-  if (!pipeline) return alert('未找到分发任务');
+  if (!pipeline) return uiAlert('未找到分发任务');
   const inputError = validatePipelineInput(pipelineInputValues(pipeline));
   if (inputError) {
     editPipeline(id);
@@ -5846,7 +6082,7 @@ async function startPipeline(id) {
     await loadState();
     showToast('分发任务已启动');
   } catch (e) {
-    alert(e.message);
+    uiAlert(e.message);
   }
 }
 
@@ -5913,7 +6149,7 @@ async function requestPipelineStop(id, mode) {
     await loadState();
     showToast(mode === 'drain' ? '输入已停止，将播完延时内容后结束直播' : '直播已切断');
   } catch (e) {
-    alert(e.message);
+    uiAlert(e.message);
   } finally {
     setLiveDelayStopPending(false);
   }
@@ -5921,7 +6157,7 @@ async function requestPipelineStop(id, mode) {
 
 async function stopPipeline(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
-  if (!pipeline) return alert('未找到分发任务');
+  if (!pipeline) return uiAlert('未找到分发任务');
   const active = state.monitor && (state.monitor.activePipelines || []).find(item => item.pipelineId === id);
   const liveSettings = pipeline.settings && pipeline.settings.live || {};
   const hasLiveDelay = liveSettings.delayEnabled === true || Boolean(active && active.liveDelay && active.liveDelay.enabled);
@@ -5935,7 +6171,7 @@ async function stopPipeline(id) {
 async function openPipelinePreview(id) {
   if (inputPreviewState.closing) return;
   const pipeline = (state.pipelines || []).find(item => item.id === id);
-  if (!pipeline) return alert('未找到分发任务');
+  if (!pipeline) return uiAlert('未找到分发任务');
   await releasePipelineCardMonitor(id);
   await releaseInputPreview();
   inputPreviewState.pipelineId = id;
@@ -5962,7 +6198,7 @@ async function openPipelinePreview(id) {
 
 async function duplicatePipeline(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
-  if (!pipeline) return alert('未找到分发任务');
+  if (!pipeline) return uiAlert('未找到分发任务');
   const payload = {
     name: `${pipeline.name || '分发任务'} 副本`,
     ...(pipeline.input ? { input: JSON.parse(JSON.stringify(pipeline.input)) } : { sourceId: pipeline.sourceId }),
@@ -5991,7 +6227,7 @@ async function refreshPipelineProgram(id) {
 }
 
 async function deleteItem(collection, id) {
-  if (!confirm('确认删除？')) return;
+  if (!await uiConfirm('确认删除？')) return;
   await api(`/api/${collection}/${id}`, { method: 'DELETE' });
   await loadState();
   showToast('已删除');
@@ -6000,7 +6236,7 @@ async function deleteItem(collection, id) {
 async function toggleRoom(id, enabled) {
   const room = (state.rooms || []).find(item => item.id === id);
   const name = room ? `“${room.name}”` : '';
-  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}本地直播间${name}？`)) return;
+  if (!await confirmDangerousAction(`确认${enabled ? '启用' : '停用'}本地直播间${name}？`)) return;
   await api(`/api/rooms/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   await loadState();
 }
@@ -6011,14 +6247,14 @@ async function toggleDestination(id, enabled) {
   const detail = enabled
     ? '启用后，正在运行且已选择此平台的任务会立即接入该输出。'
     : '禁用后，仅该平台会立即断流，其他平台和共享中继保持运行。';
-  if (!confirmDangerousAction(`确认${enabled ? '启用' : '停用'}输出目标${name}？\n\n${detail}`)) return;
+  if (!await confirmDangerousAction(`确认${enabled ? '启用' : '停用'}输出目标${name}？\n\n${detail}`)) return;
   await api(`/api/destinations/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   await loadState();
 }
 
 function editDestination(id) {
   const destination = (state.destinations || []).find(item => item.id === id);
-  if (!destination) return alert('未找到输出目标');
+  if (!destination) return uiAlert('未找到输出目标');
   editingDestinationId = id;
   const form = $('#destinationForm');
   setControlValue(form, 'name', destination.name || '');
@@ -6033,7 +6269,7 @@ function editDestination(id) {
 
 function editRoom(id) {
   const room = (state.rooms || []).find(item => item.id === id);
-  if (!room) return alert('未找到本地直播间');
+  if (!room) return uiAlert('未找到本地直播间');
   editingRoomId = id;
   const form = $('#roomForm');
   setControlValue(form, 'name', room.name || '');
@@ -6045,9 +6281,9 @@ function editRoom(id) {
 
 function editPipeline(id) {
   const pipeline = (state.pipelines || []).find(item => item.id === id);
-  if (!pipeline) return alert('未找到分发任务');
+  if (!pipeline) return uiAlert('未找到分发任务');
   if (['running', 'starting', 'fallback', 'draining'].includes(pipelineRuntimeStatus(pipeline))) {
-    return alert('任务正在运行，请先停止后再修改');
+    return uiAlert('任务正在运行，请先停止后再修改');
   }
 
   advancePipelineFormGeneration();
@@ -6215,7 +6451,7 @@ $('#logSelect').addEventListener('change', async event => {
 async function deleteSelectedLog() {
   const entry = selectedLogEntry();
   if (!entry || entry.deletable !== true) return;
-  if (!confirmDangerousAction(`确认删除日志“${entry.displayName}”？`)) return;
+  if (!await confirmDangerousAction(`确认删除日志“${entry.displayName}”？`)) return;
   try {
     await api(`/api/logs?file=${encodeURIComponent(entry.file)}`, { method: 'DELETE' });
     await loadLogs();
@@ -6431,6 +6667,11 @@ $$('[data-view]').forEach(btn => btn.addEventListener('click', () => {
   const target = btn.dataset.scroll ? document.querySelector(btn.dataset.scroll) : null;
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }));
+
+window.addEventListener('hashchange', () => {
+  const view = viewFromHash();
+  if (view && authState.authenticated) show(view);
+});
 
 $$('[data-process-sort]').forEach(button => button.addEventListener('click', () => {
   systemStatusState.processSort = button.dataset.processSort;
@@ -6680,8 +6921,8 @@ $('#logRetentionForm').addEventListener('submit', event => {
   event.preventDefault();
   saveSystemSettingsField(event.currentTarget, '#logRetentionStatus');
 });
-$('#cleanupStorageBtn').addEventListener('click', () => {
-  if (!window.confirm('确认清理超过保留期限的已完成录制和非活动日志？此操作不可撤销。')) return;
+$('#cleanupStorageBtn').addEventListener('click', async () => {
+  if (!await uiConfirm('确认清理超过保留期限的已完成录制和非活动日志？此操作不可撤销。')) return;
   refreshSecuritySettings('#storageStatus', '过期内容已清理', async () => {
     await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) });
   });
@@ -6814,9 +7055,9 @@ $('#securityUsersBody').addEventListener('change', event => {
     { method: 'PATCH', body: JSON.stringify(body) },
   ));
 });
-$('#securityUsersBody').addEventListener('click', event => {
+$('#securityUsersBody').addEventListener('click', async event => {
   const button = event.target.closest('[data-delete-user]');
-  if (!button || !window.confirm('删除该用户并撤销其全部会话？')) return;
+  if (!button || !await uiConfirm('删除该用户并撤销其全部会话？')) return;
   refreshSecuritySettings('#userManagementStatus', '用户已删除', () => api(
     `/api/auth/users/${encodeURIComponent(button.dataset.deleteUser)}`, { method: 'DELETE' },
   ));
@@ -6956,6 +7197,7 @@ handleMonitorRangePresetChange({ load: false });
 handleMonitorDetailRangePresetChange();
 initializeTheme();
 initializeSidebar();
+initializeNavDragSort();
 initializeParameterHelp();
 initializePremiumInteractions();
 $('#sidebarToggle').addEventListener('click', () => {

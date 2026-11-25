@@ -1840,6 +1840,24 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   top:7px;
   width:3px;
 }
+.console-app .nav button{padding-right:34px}
+.console-app .nav button .nav-drag-handle{
+  align-items:center;
+  color:#5e7a90;
+  cursor:grab;
+  display:inline-flex;
+  opacity:.55;
+  padding:2px;
+  position:absolute;
+  right:8px;
+  top:50%;
+  transform:translateY(-50%);
+  transition:opacity .15s ease,color .15s ease;
+}
+.console-app .nav button .nav-drag-handle:hover{color:#e6f4fb;opacity:1}
+.console-app .nav button .nav-drag-handle:active{cursor:grabbing}
+.console-app .nav button .nav-drag-handle svg{height:15px;width:15px}
+.console-app .nav button.nav-dragging{opacity:.45}
 .console-app .sidebar-machine-status{
   border-top:1px solid rgba(151,183,211,.14);
   display:grid;
@@ -2050,7 +2068,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
 .console-app .settings-facts dt{color:var(--ui-muted);font-size:12px}
 .console-app .settings-facts dd{color:var(--ui-ink);font-size:12px;margin:0;overflow-wrap:anywhere}
 .console-app .settings-status-line,.console-app .settings-note{color:var(--ui-muted);font-size:12px;line-height:1.5;margin:10px 0}
-.console-app .settings-retention-form{grid-template-columns:minmax(220px,320px) auto;max-width:700px;margin-bottom:16px}
+.console-app .security-form.settings-retention-form{align-items:center;grid-template-columns:minmax(220px,320px) auto;max-width:700px;margin-bottom:16px}
 .console-app .role-readonly-note{background:var(--ui-surface-2);border:1px solid var(--ui-line);border-radius:6px;color:var(--ui-ink-2);font-size:12px;line-height:1.5;margin:0;padding:10px 12px}
 .console-app .security-section{border-top:1px solid var(--ui-line);padding:22px 0 26px}
 .console-app .security-section>header{margin-bottom:16px}
@@ -2110,7 +2128,7 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   .console-app .brand-mark{height:30px;width:30px}
   .console-app .brand span{display:none}
   .console-app .nav{display:flex;flex-direction:row;overflow-x:auto;width:100%}
-  .console-app .nav-section-label,.console-app .sidebar-machine-status{display:none}
+  .console-app .nav-section-label,.console-app .sidebar-machine-status,.console-app .nav .nav-drag-handle{display:none}
   .console-app .nav button,.console-app[data-theme="night"] .nav button{display:flex;flex:0 0 auto;min-height:36px;padding:7px 10px;width:auto}
   .console-app .nav button.active::before,.console-app[data-theme="night"] .nav button.active::before{bottom:-8px;height:2px;left:10px;right:10px;top:auto;width:auto}
   .console-app .shell{margin-left:0}
@@ -2245,6 +2263,76 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   border-color:color-mix(in srgb,var(--ui-signal) 30%,var(--ui-line));
   box-shadow:var(--ui-shadow-lift);
 }
+.console-app .entity-control-card{
+  box-shadow:0 3px 12px rgb(16 34 45 / .10),0 1px 3px rgb(16 34 45 / .07);
+}
+.console-app .entity-control-card:hover{
+  border-color:color-mix(in srgb,var(--ui-signal) 36%,var(--ui-line));
+  box-shadow:0 12px 26px rgb(16 34 45 / .17),0 4px 10px rgb(16 34 45 / .10);
+}
+.console-app .entity-card-visual{
+  background:linear-gradient(180deg,var(--ui-surface-2),var(--ui-surface));
+  border-bottom:1px solid var(--ui-line);
+  color:var(--ui-ink);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  min-height:0;
+  padding:10px 14px;
+  position:relative;
+}
+.console-app .entity-card-visual::after{display:none}
+.console-app .entity-card-symbol{display:none}
+.console-app .entity-card-technical{bottom:auto;color:var(--ui-muted);font-size:10px;left:auto;position:static}
+.console-app .entity-card-status{
+  background:var(--ui-surface-2);
+  border:1px solid var(--ui-line);
+  border-radius:999px;
+  color:var(--ui-muted);
+  font-weight:700;
+}
+.console-app .entity-card-status i{background:#94a6b3;box-shadow:none}
+.console-app .entity-control-card.live,
+.console-app .entity-control-card.enabled{
+  border-color:color-mix(in srgb,#1dbf78 30%,var(--ui-line));
+}
+.console-app .entity-control-card.live .entity-card-visual,
+.console-app .entity-control-card.enabled .entity-card-visual{
+  background:linear-gradient(180deg,color-mix(in srgb,#1dbf78 10%,var(--ui-surface-2)),var(--ui-surface));
+}
+.console-app .entity-control-card.live .entity-card-status,
+.console-app .entity-control-card.enabled .entity-card-status{
+  background:color-mix(in srgb,#1dbf78 16%,var(--ui-surface));
+  border-color:color-mix(in srgb,#1dbf78 46%,var(--ui-line));
+  color:#0b7d4f;
+}
+.console-app .entity-control-card.live .entity-card-status i,
+.console-app .entity-control-card.enabled .entity-card-status i{
+  background:#1dbf78;
+  box-shadow:0 0 0 3px rgb(29 191 120 / .16),0 0 8px rgb(29 191 120 / .5);
+}
+.console-app .entity-control-card.disabled{
+  filter:grayscale(1);
+  opacity:.72;
+}
+.console-app .entity-control-card.disabled .entity-card-status{
+  background:var(--ui-surface-2);
+  border-color:var(--ui-line);
+  color:var(--ui-muted);
+}
+.console-app .entity-control-card.disabled .entity-card-status i{
+  background:transparent;
+  border:2px solid #94a6b3;
+  box-shadow:none;
+  height:8px;
+  width:8px;
+}
+.console-app[data-theme="night"] .entity-card-visual{background:linear-gradient(180deg,var(--ui-surface-2),var(--ui-surface))}
+.console-app[data-theme="night"] .entity-control-card.live .entity-card-visual,
+.console-app[data-theme="night"] .entity-control-card.enabled .entity-card-visual{background:linear-gradient(180deg,color-mix(in srgb,#1dbf78 12%,var(--ui-surface-2)),var(--ui-surface))}
+.console-app[data-theme="night"] .entity-control-card.live .entity-card-status,
+.console-app[data-theme="night"] .entity-control-card.enabled .entity-card-status{color:#62e0b5}
 .console-app .pipeline-task-card.running::before{
   background:conic-gradient(from var(--ui-border-angle),transparent 0 66%,color-mix(in srgb,var(--ui-good) 84%,white) 76%,color-mix(in srgb,var(--ui-signal) 70%,white) 82%,transparent 92%);
   border-radius:inherit;
@@ -2480,3 +2568,32 @@ pre{background:#0f172a;border-radius:14px;color:#d7e3f4;max-height:560px;overflo
   #inputPreviewDialog .input-preview-audio-meter{grid-template-rows:auto 186px auto}
   #inputPreviewDialog .input-preview-audio-meter-head span{display:none}
 }
+.console-app dialog.ui-app-dialog{max-width:min(480px,calc(100vw - 28px));width:100%}
+.console-app .ui-app-dialog-shell{background:var(--ui-surface);border-radius:8px;display:grid;gap:16px;padding:20px}
+.console-app .ui-app-dialog-head{align-items:flex-start;display:flex;gap:16px;justify-content:space-between}
+.console-app .ui-app-dialog-head h2{font-size:16px;line-height:1.3;margin:0}
+.console-app .ui-app-dialog-head .icon-button{flex:0 0 auto;margin-top:-2px}
+.console-app .ui-app-dialog-message{color:var(--ui-muted);font-size:13px;line-height:1.55;margin:8px 0 0;white-space:pre-line}
+.console-app .ui-app-dialog-copy{display:grid;gap:7px}
+.console-app .ui-app-dialog-copy span{color:var(--ui-muted);font-size:11px}
+.console-app .ui-app-dialog-copy input{
+  background:var(--ui-surface-2);
+  border:1px solid var(--ui-line);
+  border-radius:6px;
+  color:var(--ui-ink);
+  font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+  font-size:12px;
+  padding:9px 10px;
+  width:100%;
+}
+.console-app .ui-app-dialog-actions{display:flex;gap:10px;justify-content:flex-end}
+.console-app .ui-app-dialog-cancel{
+  background:var(--ui-surface-2);
+  border:1px solid var(--ui-line);
+  border-radius:6px;
+  color:var(--ui-ink);
+  cursor:pointer;
+  font-size:13px;
+  padding:8px 16px;
+}
+.console-app .ui-app-dialog-cancel:hover{background:var(--ui-line)}

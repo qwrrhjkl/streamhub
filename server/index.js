@@ -415,6 +415,7 @@ async function handleApi(req, res, url, {
     const viewerReadable = url.pathname === '/api/state'
       || url.pathname === '/api/monitor'
       || url.pathname === '/api/system-status'
+      || url.pathname === '/api/system-network-history'
       || url.pathname === '/api/system-info'
       || url.pathname === '/api/encoding-capabilities'
       || url.pathname === '/api/logs'
@@ -547,6 +548,14 @@ async function handleApi(req, res, url, {
 
   if (url.pathname === '/api/system-status' && req.method === 'GET') {
     return json(res, 200, await systemStatus.snapshot());
+  }
+
+  if (url.pathname === '/api/system-network-history' && req.method === 'GET') {
+    const interfaceName = String(url.searchParams.get('interface') || '').trim() || undefined;
+    const history = typeof systemStatus.networkHistory === 'function'
+      ? systemStatus.networkHistory(interfaceName)
+      : { interface: '', points: [] };
+    return json(res, 200, history);
   }
 
   if (url.pathname === '/api/encoding-capabilities' && req.method === 'GET') {

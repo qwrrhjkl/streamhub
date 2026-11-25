@@ -102,6 +102,43 @@ function createSystemStatusCollector({
   linuxMetrics = createLinuxSystemMetricsCollector(),
 } = {}) {
   let previousCpus = null;
+  let networkHistory = new Map();
+
+  function recordNetworkHistory(timestampMs, network) {
+    const interfaces = Array.isArray(network && network.interfaces) ? network.interfaces : [];
+    for (const iface of interfaces) {
+      const name = iface && iface.name;
+      if (!name) continue;
+      const receive = Number(iface.receiveBytesPerSec);
+      const send = Number(iface.sendBytesPerSec);
+      const point = {
+        time: timestampMs,
+        receive: Number.isFinite(receive) ? receive : 0,
+        send: Number.isFinite(send) ? send : 0,
+      };
+      let points = networkHistory.get(name);
+      if (!points) {
+        points = [];
+        networkHistory.set(name, points);
+      }
+      points.push(point);
+      const cutoff = timestampMs - NETWORK_HISTORY_WINDOW_MS;
+      while (points.length && points[0].time < cutoff) points.shift();
+      if (points.length > NETWORK_HISTORY_MAX_POINTS) {
+        points.splice(0, points.length - NETWORK_HISTORY_MAX_POINTS);
+      }
+    }
+  }
+
+  function networkHistorySnapshot(interfaceName) {
+    if (interfaceName) {
+      return { interface: interfaceName, points: networkHistory.get(interfaceName) || [] };
+    }
+    for (const [name, points] of networkHistory.entries()) {
+      if (points.length) return { interface: name, points };
+    }
+    return { interface: '', points: [] };
+  }
 
   return {
     async snapshot() {
@@ -131,9 +168,11 @@ function createSystemStatusCollector({
         })(),
       ]);
       const devices = gpuResult && gpuResult.ok ? parseNvidiaSmiCsv(gpuResult.stdout) : [];
+      const sampledAt = now();
+      recordNetworkHistory(sampledAt.getTime(), linuxResult.network);
 
       return {
-        sampledAt: now().toISOString(),
+        sampledAt: sampledAt.toISOString(),
         cpu: {
           available: cpus.length > 0,
           usagePercent,
@@ -156,6 +195,7 @@ function createSystemStatusCollector({
         processes: linuxResult.processes,
       };
     },
+    networkHistory: networkHistorySnapshot,
   };
 }
 
@@ -173,3 +213,6 @@ const NVIDIA_QUERY = [
   '--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,utilization.encoder,utilization.decoder',
   '--format=csv,noheader,nounits',
 ];
+
+const NETWORK_HISTORY_WINDOW_MS = 10 * 60_000;
+const NETWORK_HISTORY_MAX_POINTS = 900;
