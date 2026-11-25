@@ -19,6 +19,8 @@ const IDLE_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 3_000;
 const RAW_INPUT_BITRATE_THRESHOLD_KBPS = 100_000;
 const MAX_PENDING_STDOUT_BYTES = 16 * 1024 * 1024;
+const PREVIEW_RETRY_MAX = 3;
+const PREVIEW_RETRY_DELAY_MS = 350;
 
 function previewError(message, statusCode) {
   const error = new Error(message);
@@ -170,6 +172,7 @@ class PreviewManager {
   destroy(session) {
     if (!this.sessions.has(session.id)) return session.exitPromise;
     this.clearIdleTimer(session);
+    this.clearRetryTimer(session);
     this.sessions.delete(session.id);
     session.stopping = true;
     try {
@@ -188,6 +191,10 @@ class PreviewManager {
     }
     session.clients.clear();
     this.appendLog(session, 'STOPPED');
+    if (session.exited) {
+      this.resolveExitOnce(session);
+      this.closeLog(session);
+    }
     return session.exitPromise;
   }
 
@@ -218,6 +225,7 @@ class PreviewManager {
       if (progress.bitrateKbps) session.previewBitrateKbps = progress.bitrateKbps;
       session.state = 'receiving';
       session.message = '';
+      session.everReceived = true;
       this.appendLog(session, 'RECEIVING');
       return;
     }
@@ -235,23 +243,22 @@ class PreviewManager {
       this.clearScheduledTimeout(session.stopTimer);
       session.stopTimer = null;
     }
-    if (!session.exited) {
-      session.exited = true;
-      session.resolveExit();
-    }
+    session.exited = true;
     const detached = !this.sessions.has(session.id) || session.stopping;
-    if (!detached && session.state !== 'no-signal') {
+    if (detached) {
+      this.finalizeExit(session);
+      return;
+    }
+    if (this.shouldRetryPreview(session)) {
+      this.scheduleRetry(session);
+      return;
+    }
+    if (session.state !== 'no-signal') {
       session.state = 'failed';
       session.message = '预览进程已结束，请检查输入源、网络或设备状态';
       this.appendLog(session, 'EXITED');
     }
-    this.closeLog(session);
-    if (detached) return;
-    for (const response of session.clients) {
-      try { response.end(); } catch {}
-    }
-    session.clients.clear();
-    this.scheduleIdleStop(session);
+    this.finalizeExit(session);
   }
 
   start(request = {}) {
@@ -311,6 +318,7 @@ class PreviewManager {
       audio: previewOptions.audio,
       monitor: previewOptions.monitor,
       child,
+      args,
       logFile: '',
       logClosed: false,
       state: 'connecting',
@@ -329,6 +337,11 @@ class PreviewManager {
       outputDescriptionStarted: false,
       clients: new Set(),
       idleTimer: null,
+      retryTimer: null,
+      retryCount: 0,
+      maxRetries: PREVIEW_RETRY_MAX,
+      everReceived: false,
+      exitResolved: false,
       releaseRequested: false,
       stopping: false,
       stopTimer: null,
@@ -353,6 +366,13 @@ class PreviewManager {
     const sourceLabel = String(source.name || source.id || '输入源').replace(/[\r\n]+/g, ' ').slice(0, 180);
     this.appendLog(session, `STARTED\nsourceLabel=${sourceLabel}`);
 
+    this.wireChild(session);
+    this.scheduleIdleStop(session);
+    return this.describe(session.id);
+  }
+
+  wireChild(session) {
+    const child = session.child;
     child.stdout.on('data', chunk => {
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (!session.stdoutStarted) {
@@ -373,9 +393,74 @@ class PreviewManager {
       for (const line of session.stderrRecords.flush()) this.updateFromStderr(session, line);
     });
     child.once('exit', () => this.handleExit(session));
+  }
 
+  spawnChild(session) {
+    let child;
+    try {
+      child = this.spawnProcess(this.mediaBinaries.ffmpeg, session.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      return false;
+    }
+    session.child = child;
+    session.exited = false;
+    session.stdoutStarted = session.clients.size > 0;
+    session.pendingStdout = [];
+    session.pendingStdoutBytes = 0;
+    session.stderrRecords = createFFmpegProgressAccumulator();
+    this.wireChild(session);
+    return true;
+  }
+
+  resolveExitOnce(session) {
+    if (session.exitResolved) return;
+    session.exitResolved = true;
+    try { session.resolveExit(); } catch {}
+  }
+
+  clearRetryTimer(session) {
+    if (!session.retryTimer) return;
+    this.clearScheduledTimeout(session.retryTimer);
+    session.retryTimer = null;
+  }
+
+  shouldRetryPreview(session) {
+    if (session.retryCount >= session.maxRetries) return false;
+    if (session.everReceived) return false;
+    if (session.state !== 'no-signal') return false;
+    return true;
+  }
+
+  scheduleRetry(session) {
+    session.retryCount += 1;
+    session.state = 'connecting';
+    session.message = '正在连接输入源…';
+    session.outputDescriptionStarted = false;
+    this.appendLog(session, `RETRY ${session.retryCount}`);
+    const delay = PREVIEW_RETRY_DELAY_MS * session.retryCount;
+    session.retryTimer = this.scheduleTimeout(() => {
+      session.retryTimer = null;
+      if (session.stopping || !this.sessions.has(session.id)) return;
+      if (!this.spawnChild(session)) {
+        session.state = 'failed';
+        session.message = '预览进程启动失败，请检查输入源、网络或设备状态';
+        this.finalizeExit(session);
+      }
+    }, delay);
+    if (session.retryTimer && typeof session.retryTimer.unref === 'function') session.retryTimer.unref();
+  }
+
+  finalizeExit(session) {
+    this.clearRetryTimer(session);
+    this.resolveExitOnce(session);
+    this.closeLog(session);
+    const detached = !this.sessions.has(session.id) || session.stopping;
+    if (detached) return;
+    for (const response of session.clients) {
+      try { response.end(); } catch {}
+    }
+    session.clients.clear();
     this.scheduleIdleStop(session);
-    return this.describe(session.id);
   }
 
   attach(id, response) {

@@ -324,3 +324,20 @@ test('classifies the DeckLink autodetect message as no input source', () => {
   assert.equal(descriptor.state, 'no-signal');
   assert.equal(descriptor.message, '暂无输入源');
 });
+
+test('retries a DeckLink preview that fails autodetect before receiving any frame', () => {
+  const { previews, child, spawned, timers } = createPreviewHarness();
+  const preview = previews.start({ input: { type: 'capture', capture: { backend: 'decklink', device: 'DeckLink Duo 2 (1)' } } });
+  child.stderr.emit('data', Buffer.from('[decklink] Cannot Autodetect input stream or No signal\n'));
+  assert.equal(previews.describe(preview.id).state, 'no-signal');
+
+  child.emit('exit');
+  assert.equal(previews.describe(preview.id).state, 'connecting');
+
+  const retryTimer = timers.at(-1);
+  retryTimer.callback();
+  assert.equal(spawned.length, 2);
+
+  child.stderr.emit('data', Buffer.from('frame=    1 fps=1.0 q=8.0 size=       8KiB time=00:00:01.00 bitrate=  65.5kbits/s speed=1x\n'));
+  assert.equal(previews.describe(preview.id).state, 'receiving');
+});
